@@ -6,5 +6,6 @@
   "poll_time": "12:00",
   "auto_confirm_hours": 12,
   "call_day": "Sunday",
-  "call_time": "10:00"
+  "call_time": "10:00",
+  "test_mode": false
 }

@@ -136,24 +136,28 @@ Should output: `.env.local` ✅
 
 ### Step 1: Create Virtual Environment
 
-```bash
+```fish
 cd "/Users/sergeypochikovskiy/AI_workspace/Projects/6. Family-Telegram-Bot"
 python3 -m venv venv
 ```
 
 This creates a `venv/` folder with isolated Python.
 
-### Step 2: Activate Virtual Environment
+### Step 2: Activate Virtual Environment (Fish Shell)
 
-```bash
-source venv/bin/activate
+Fish shell has different syntax than bash. Use:
+
+```fish
+source venv/bin/activate.fish
 ```
 
 You should see `(venv)` at the start of your terminal prompt.
 
+**Note:** If you're using bash instead of fish, use: `source venv/bin/activate`
+
 ### Step 3: Install Requirements
 
-```bash
+```fish
 pip install -r requirements.txt
 ```
 
@@ -168,9 +172,9 @@ Successfully installed python-telegram-bot-21.x.x pytz-2024.x apscheduler-3.x.x 
 
 ### Step 1: Start the Bot
 
-```bash
+```fish
 cd "/Users/sergeypochikovskiy/AI_workspace/Projects/6. Family-Telegram-Bot"
-source venv/bin/activate  # if not already active
+source venv/bin/activate.fish  # Activate venv (fish syntax)
 python bot.py
 ```
 
@@ -304,12 +308,12 @@ Once bot is running and responding:
 
 ---
 
-## Quick Reference
+## Quick Reference (Fish Shell)
 
 **Start bot:**
-```bash
+```fish
 cd "/Users/sergeypochikovskiy/AI_workspace/Projects/6. Family-Telegram-Bot"
-source venv/bin/activate
+source venv/bin/activate.fish
 python bot.py
 ```
 
@@ -317,7 +321,9 @@ python bot.py
 
 **Get token:** Bitwarden → search "Telegram Family Bot" → copy password
 
-**Reset venv:** `rm -rf venv` → `python3 -m venv venv` → `source venv/bin/activate` → `pip install -r requirements.txt`
+**Reset venv:** `rm -rf venv` → `python3 -m venv venv` → `source venv/bin/activate.fish` → `pip install -r requirements.txt`
+
+**Note:** All commands use **fish** shell syntax. If using bash, replace `source venv/bin/activate.fish` with `source venv/bin/activate`
 
 ---
 

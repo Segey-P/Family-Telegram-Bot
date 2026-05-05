@@ -66,22 +66,17 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /tz command."""
     if not context.args:
         await update.message.reply_text(
-            "⚠️ Формат: `/tz Europe/Berlin` (или любая из https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)",
+            "⚠️ Формат: `/tz America/Vancouver` или `/tz Europe/Berlin`\n"
+            "Примеры: `Vancouver`, `Berlin`, `Tokyo`, `New_York`",
             parse_mode="Markdown"
         )
         return
 
-    tz_name = " ".join(context.args)
+    tz_input = " ".join(context.args)
+    resolved_tz, error_msg = resolve_timezone(tz_input)
 
-    try:
-        pytz.timezone(tz_name)
-    except pytz.UnknownTimeZoneError:
-        await update.message.reply_text(
-            f"❌ Неизвестная временная зона: `{tz_name}`\n\n"
-            "Используйте формат: `Европа/Берлин`\n"
-            "Список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones",
-            parse_mode="Markdown"
-        )
+    if error_msg:
+        await update.message.reply_text(error_msg, parse_mode="Markdown")
         return
 
     sessions = load_sessions()
@@ -103,25 +98,25 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "is_admin": len(sessions[chat_id]["members"]) == 0
         }
 
-    sessions[chat_id]["members"][user_id]["timezone"] = tz_name
+    sessions[chat_id]["members"][user_id]["timezone"] = resolved_tz
     save_sessions(sessions)
 
-    await update.message.reply_text(f"✅ Сохранено: {tz_name}")
+    await update.message.reply_text(f"✅ Сохранено: {resolved_tz}")
 
 
 async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /моевремя command."""
+    """Handle /mytime command."""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/таймзона Европа/Берлин`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
         return
 
     user_tz_name = sessions[chat_id]["members"][user_id]["timezone"]
     if not user_tz_name:
-        await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/таймзона Европа/Берлин`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
         return
 
     try:
@@ -268,6 +263,33 @@ async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         json.dump(settings, f, indent=2)
 
 
+def resolve_timezone(tz_input: str) -> tuple[str | None, str]:
+    """
+    Fuzzy-match timezone input. Returns (resolved_tz_name, error_msg).
+    If error_msg is not empty, resolved_tz_name is None.
+    """
+    # Try exact match first
+    try:
+        pytz.timezone(tz_input)
+        return tz_input, ""
+    except pytz.UnknownTimeZoneError:
+        pass
+
+    # Try common prefix matches (e.g., "Vancouver" → "America/Vancouver")
+    all_tzs = pytz.all_timezones
+    matches = [tz for tz in all_tzs if tz_input.lower() in tz.lower()]
+
+    if len(matches) == 1:
+        return matches[0], ""
+    elif len(matches) > 1:
+        # Multiple matches—suggest the most common ones
+        top_matches = matches[:5]
+        suggestions = "\n".join(f"  • {tz}" for tz in top_matches)
+        return None, f"❌ Неоднозначно. Уточните:\n{suggestions}"
+    else:
+        return None, f"❌ Неизвестная временная зона: `{tz_input}`. Примеры: `America/Vancouver`, `Europe/Berlin`, `Asia/Tokyo`"
+
+
 def generate_time_options(base_time_str: str) -> list[str]:
     """Generate 6 time options: base ± 2h to +3h."""
     hour, minute = map(int, base_time_str.split(":"))
@@ -321,7 +343,9 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             sessions[chat_id]["event"]["proposal_author"] = user_id
             sessions[chat_id]["event"]["responses"] = {uid: "pending" for uid in sessions[chat_id]["members"].keys()}
             sessions[chat_id]["event"]["status"] = "proposed"
-            sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
+            # In test mode, use 1 minute; otherwise 12 hours
+            deadline_delta = timedelta(minutes=1) if load_settings().get("test_mode") else timedelta(hours=12)
+            sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
 
             save_sessions(sessions)
 
@@ -526,6 +550,75 @@ async def friday_invite_job(app):
     save_sessions(sessions)
 
 
+async def handle_test_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /test_mode command (admin only). /test_mode on or /test_mode off"""
+    sessions = load_sessions()
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+    if not is_admin:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Формат: `/test_mode on` или `/test_mode off`", parse_mode="Markdown")
+        return
+
+    action = context.args[0].lower()
+    settings = load_settings()
+
+    if action == "on":
+        settings["test_mode"] = True
+        await update.message.reply_text(
+            "🧪 Тестовый режим включен!\n\n"
+            "• Опрос будет отправляться каждые 10 минут\n"
+            "• Автоподтверждение: 1 минута\n"
+            "• Напоминание: 5 секунд перед созвоном"
+        )
+    elif action == "off":
+        settings["test_mode"] = False
+        await update.message.reply_text("✅ Тестовый режим отключен. Обычный режим восстановлен.")
+    else:
+        await update.message.reply_text("❌ Неизвестный параметр. Используйте: `on` или `off`", parse_mode="Markdown")
+        return
+
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    # Restart scheduler with new settings
+    if hasattr(context.application, "scheduler"):
+        scheduler = context.application.scheduler
+        scheduler.remove_job("friday_invite")
+
+        if settings.get("test_mode"):
+            scheduler.add_job(
+                friday_invite_job,
+                "interval",
+                minutes=10,
+                args=[context.application],
+                id="friday_invite",
+                replace_existing=True
+            )
+            logger.info("Test mode: Friday job now runs every 10 minutes")
+        else:
+            scheduler.add_job(
+                friday_invite_job,
+                "cron",
+                day_of_week=4,
+                hour=12,
+                minute=0,
+                args=[context.application],
+                id="friday_invite",
+                replace_existing=True
+            )
+            logger.info("Normal mode: Friday job restored to Friday 12:00")
+
+
 async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Debug command: Manually trigger Friday invite (testing only)."""
     sessions = load_sessions()
@@ -533,12 +626,12 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = str(update.message.from_user.id)
 
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Сначала установите вашу временную зону: `/таймзона`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Сначала установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
         return
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
+        await update.message.reply_text("❌ Только администратор может это делать. (первый пользователь в группе автоматически администратор)")
         return
 
     await update.message.reply_text("⏳ Отправляю приглашение на созвон...")
@@ -633,29 +726,47 @@ async def post_init(app):
     scheduler = AsyncIOScheduler()
     scheduler.start()
 
-    # Schedule Friday invite at 12:00 (every Friday)
-    scheduler.add_job(
-        friday_invite_job,
-        "cron",
-        day_of_week=4,  # Friday (0=Mon, 4=Fri)
-        hour=12,
-        minute=0,
-        args=[app],
-        id="friday_invite",
-        replace_existing=True
-    )
+    settings = load_settings()
+    test_mode = settings.get("test_mode", False)
 
-    # Schedule auto-confirm check every minute
+    # Schedule Friday invite
+    if test_mode:
+        # Test mode: every 10 minutes
+        scheduler.add_job(
+            friday_invite_job,
+            "interval",
+            minutes=10,
+            args=[app],
+            id="friday_invite",
+            replace_existing=True
+        )
+        logger.info("TEST MODE: Friday job runs every 10 minutes")
+    else:
+        # Normal mode: Friday at 12:00
+        scheduler.add_job(
+            friday_invite_job,
+            "cron",
+            day_of_week=4,  # Friday (0=Mon, 4=Fri)
+            hour=12,
+            minute=0,
+            args=[app],
+            id="friday_invite",
+            replace_existing=True
+        )
+        logger.info("Normal mode: Friday job scheduled for Friday 12:00")
+
+    # Schedule auto-confirm check every minute (or 5 seconds in test mode)
+    check_interval = 5 if test_mode else 60
     scheduler.add_job(
         check_autoconfirm_job,
         "interval",
-        minutes=1,
+        seconds=check_interval,
         args=[app],
         id="autoconfirm_check",
         replace_existing=True
     )
 
-    logger.info("Scheduler initialized with Friday invite + auto-confirm jobs")
+    logger.info(f"Scheduler initialized. Test mode: {test_mode}")
     app.scheduler = scheduler
 
 
@@ -674,6 +785,7 @@ def main():
     app.add_handler(CommandHandler("help", handle_help))  # /help (was /помощь)
     app.add_handler(CommandHandler("time", handle_time_command))  # /time (was /время)
     app.add_handler(CommandHandler("poll", handle_poll_on))  # /poll (was /опрос)
+    app.add_handler(CommandHandler("test_mode", handle_test_mode))  # /test_mode on/off
     app.add_handler(CommandHandler("debug_invite", handle_debug_invite))  # /debug_invite (was /отправить_опрос)
 
     # Callback handlers
