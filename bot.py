@@ -520,6 +520,28 @@ async def friday_invite_job(app):
     save_sessions(sessions)
 
 
+async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: Manually trigger Friday invite (testing only)."""
+    sessions = load_sessions()
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await update.message.reply_text("❌ Сначала установите вашу временную зону: `/таймзона`", parse_mode="Markdown")
+        return
+
+    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+    if not is_admin:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    await update.message.reply_text("⏳ Отправляю приглашение на созвон...")
+
+    # Manually trigger Friday invite job
+    await friday_invite_job(context.application)
+    await update.message.reply_text("✅ Приглашение отправлено!")
+
+
 async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Friday invite button responses."""
     query = update.callback_query
@@ -643,7 +665,8 @@ def main():
     app.add_handler(CommandHandler("моевремя", handle_mytime))
     app.add_handler(CommandHandler("помощь", handle_help))
     app.add_handler(CommandHandler("время", handle_time_command))
-    app.add_handler(CommandHandler("опрос", handle_poll_on))  # Simplified: just /опрос
+    app.add_handler(CommandHandler("опрос", handle_poll_on))
+    app.add_handler(CommandHandler("отправить_опрос", handle_debug_invite))  # Debug command
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
