@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from dotenv import load_dotenv
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -55,17 +56,17 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "👋 Привет! Я помогу координировать еженедельный созвон.\n\n"
         "Сначала установите вашу временную зону:\n"
-        "`/таймзона Европа/Берлин`\n\n"
-        "Для справки: `/помощь`"
+        "`/tz Europe/Berlin` (или Европа/Берлин)\n\n"
+        "Для справки: `/help`"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /таймзона command."""
+    """Handle /tz command."""
     if not context.args:
         await update.message.reply_text(
-            "⚠️ Формат: `/таймзона Европа/Берлин`",
+            "⚠️ Формат: `/tz Europe/Berlin` (или любая из https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)",
             parse_mode="Markdown"
         )
         return
@@ -162,23 +163,28 @@ async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /помощь command."""
+    """Handle /help command."""
     text = (
         "<b>Команды</b>\n\n"
         "<b>Пользователь:</b>\n"
-        "`/таймзона Европа/Берлин` — установить вашу временную зону\n"
-        "`/моевремя` — показать ваше текущее время\n"
-        "`/помощь` — этот список\n\n"
+        "<code>/tz Europe/Berlin</code> — установить вашу временную зону\n"
+        "<code>/mytime</code> — показать ваше текущее время\n"
+        "<code>/help</code> — этот список\n\n"
         "<b>Администратор:</b>\n"
-        "`/время 10:00 Америка/Ванкувер` — обновить время созвона\n"
-        "`/опрос вкл` — включить еженедельные опросы\n"
-        "`/опрос выкл` — отключить еженедельные опросы"
+        "<code>/time 10:00 America/Vancouver</code> — обновить время созвона\n"
+        "<code>/poll on</code> — включить еженедельные опросы\n"
+        "<code>/poll off</code> — отключить еженедельные опросы\n"
+        "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n\n"
+        "<b>Примеры:</b>\n"
+        "<code>/tz Europe/Berlin</code>\n"
+        "<code>/tz America/Vancouver</code>\n"
+        "<code>/mytime</code>"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /время command (admin only)."""
+    """Handle /time command (admin only)."""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
@@ -194,7 +200,7 @@ async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
-            "Формат: `/время 10:00 Америка/Ванкувер`",
+            "Формат: `/time 10:00 America/Vancouver`",
             parse_mode="Markdown"
         )
         return
@@ -227,7 +233,7 @@ async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /опрос command (admin only). /опрос вкл or /опрос выкл"""
+    """Handle /poll command (admin only). /poll on or /poll off"""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
@@ -242,20 +248,20 @@ async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("Формат: `/опрос вкл` или `/опрос выкл`", parse_mode="Markdown")
+        await update.message.reply_text("Формат: `/poll on` или `/poll off`", parse_mode="Markdown")
         return
 
     action = context.args[0].lower()
     settings = load_settings()
 
-    if action == "вкл":
+    if action == "on":
         settings["poll_enabled"] = True
         await update.message.reply_text("✅ Еженедельные опросы включены.")
-    elif action == "выкл":
+    elif action == "off":
         settings["poll_enabled"] = False
         await update.message.reply_text("✅ Еженедельные опросы отключены.")
     else:
-        await update.message.reply_text("❌ Неизвестный параметр. Используйте: `вкл` или `выкл`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Неизвестный параметр. Используйте: `on` или `off`", parse_mode="Markdown")
         return
 
     with open(SETTINGS_FILE, "w") as f:
@@ -609,11 +615,12 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
 async def set_bot_commands(app):
     """Set bot commands for the UI."""
     commands = [
-        BotCommand("таймзона", "Установить временную зону"),
-        BotCommand("моевремя", "Показать ваше время"),
-        BotCommand("помощь", "Список команд"),
-        BotCommand("время", "Обновить время созвона (администратор)"),
-        BotCommand("опрос", "Включить/отключить опросы (администратор)"),
+        BotCommand("tz", "Установить временную зону (Telegram limitation: ASCII only)"),
+        BotCommand("mytime", "Показать ваше время"),
+        BotCommand("help", "Список команд"),
+        BotCommand("time", "Обновить время созвона (администратор)"),
+        BotCommand("poll", "Включить/отключить опросы"),
+        BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -653,20 +660,21 @@ async def post_init(app):
 
 
 def main():
+    load_dotenv(dotenv_path=".env.local")
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise ValueError("TELEGRAM_BOT_TOKEN not set")
+        raise ValueError("TELEGRAM_BOT_TOKEN not set in .env.local")
 
     app = ApplicationBuilder().token(token).build()
 
-    # Command handlers
+    # Command handlers (ASCII names only—Telegram limitation)
     app.add_handler(CommandHandler("start", handle_start))
-    app.add_handler(CommandHandler("таймзона", handle_timezone))
-    app.add_handler(CommandHandler("моевремя", handle_mytime))
-    app.add_handler(CommandHandler("помощь", handle_help))
-    app.add_handler(CommandHandler("время", handle_time_command))
-    app.add_handler(CommandHandler("опрос", handle_poll_on))
-    app.add_handler(CommandHandler("отправить_опрос", handle_debug_invite))  # Debug command
+    app.add_handler(CommandHandler("tz", handle_timezone))  # /tz (was /таймзона)
+    app.add_handler(CommandHandler("mytime", handle_mytime))  # /mytime (was /моевремя)
+    app.add_handler(CommandHandler("help", handle_help))  # /help (was /помощь)
+    app.add_handler(CommandHandler("time", handle_time_command))  # /time (was /время)
+    app.add_handler(CommandHandler("poll", handle_poll_on))  # /poll (was /опрос)
+    app.add_handler(CommandHandler("debug_invite", handle_debug_invite))  # /debug_invite (was /отправить_опрос)
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
