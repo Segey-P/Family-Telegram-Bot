@@ -1,0 +1,375 @@
+# 🤖 Family Telegram Bot — MVP Specification
+
+---
+
+## 🎯 Goal
+
+Provide a frictionless way to coordinate a weekly family call across time zones:
+
+* No manual time calculations
+* No free-text input (except fallback)
+* Minimal interaction (buttons only)
+* Event-based confirmation (not voting)
+
+---
+
+## 🧩 Core Principles
+
+* Use Telegram Bot API inline buttons for all interactions
+* Store **one canonical time** (base timezone)
+* Display **all times in user’s local timezone**
+* Model = **event invite with negotiation**, not poll
+
+---
+
+## 🗂️ Data Model
+
+```yaml
+settings:
+  default_time: "10:00"
+  base_timezone: "America/Vancouver"
+  poll_enabled: true
+  poll_schedule: "Friday 12:00"
+  auto_confirm_hours: 12
+
+users:
+  user_id:
+    name: string
+    timezone: string
+
+event:
+  current_time: datetime
+  status: idle | proposed | confirmed
+  proposal_author: user_id
+  responses:
+    user_id: yes | no | pending
+  deadline: datetime
+```
+
+---
+
+## ⚙️ Commands
+
+### User Commands (RU)
+
+```text
+/таймзона Европа/Берлин
+/моевремя
+```
+
+---
+
+### Admin Commands (RU)
+
+```text
+/время 10:00 Америка/Ванкувер
+/опрос вкл
+/опрос выкл
+/расписание пятница 12:00
+/автоподтверждение 12ч
+```
+
+---
+
+## 🌍 Timezone Handling
+
+* Each user sets timezone:
+
+```text
+/таймзона Европа/Берлин
+```
+
+* Internally:
+
+  * store `default_time` in `base_timezone`
+* On display:
+
+  * convert → user timezone
+  * show **local time only**
+
+---
+
+## 📅 Weekly Flow
+
+---
+
+### 1. Friday — Event Invite
+
+**Message (RU):**
+
+```text
+Созвон в воскресенье:
+
+Базовое время: 19:00
+
+Подходит?
+```
+
+**Buttons:**
+
+```text
+✅ Подходит
+🔄 Предложить другое время
+❌ Не смогу
+```
+
+---
+
+## 🔄 Time Proposal Flow
+
+---
+
+### Time Options Generation
+
+* Range: `-2h → +3h` from `default_time`
+
+```python
+options = [
+  base_time - 2h,
+  base_time - 1h,
+  base_time,
+  base_time + 1h,
+  base_time + 2h,
+  base_time + 3h
+]
+```
+
+* Convert each → user local time before display
+
+---
+
+### Time Selection UI (RU)
+
+```text
+Выберите время:
+
+🕗 08:00
+🕘 09:00
+👉 🕙 10:00
+🕚 11:00
+🕛 12:00
+🕐 13:00
+✏️ Другое (ввести)
+```
+
+* `👉` indicates current selection
+* UI must be **re-rendered after each click**
+
+---
+
+### On Selection
+
+#### 1. Private Feedback (RU)
+
+```text
+Принято 👍 Уведомил всех
+```
+
+---
+
+#### 2. Group Message (RU)
+
+```text
+Анна предлагает новое время:
+
+➡️ 11:00
+
+Подходит?
+```
+
+**Buttons:**
+
+```text
+✅ Подходит
+❌ Не подходит
+🔄 Предложить другое
+```
+
+---
+
+## 🔁 Confirmation Logic (Event-Based)
+
+### State Machine
+
+```text
+idle → proposed → confirmed
+        ↑
+        └── new proposal
+```
+
+---
+
+### Rules
+
+* New proposal:
+
+  * resets all responses
+* Any ❌:
+
+  * proposal rejected
+* Any 🔄:
+
+  * replaces proposal
+* All ✅:
+
+  * confirmed
+* No objections within timeout:
+
+  * auto-confirm
+
+---
+
+## ⏱️ Auto-Confirm
+
+Trigger:
+
+* No ❌ responses
+* `deadline` reached
+
+**Message (RU):**
+
+```text
+✅ Время подтверждено автоматически:
+
+➡️ 11:00
+```
+
+---
+
+## 👀 Status Transparency (RU)
+
+```text
+➡️ 11:00
+
+Подтвердили:
+Сергей, Анна
+
+Ожидаем:
+Мама
+```
+
+---
+
+## ✏️ Manual Time Input (Fallback)
+
+* Trigger: “✏️ Другое (ввести)”
+* Open private chat
+
+**Prompt (RU):**
+
+```text
+Введите время (HH:MM)
+```
+
+Flow:
+
+1. Validate input
+2. Convert → base timezone
+3. Trigger proposal flow
+
+---
+
+## 🔔 Sunday Reminder
+
+### 5 Minutes Before
+
+**Message (RU):**
+
+```text
+⏰ Созвон через 5 минут
+
+Готовы?
+```
+
+**Buttons:**
+
+```text
+✅ Да
+⏳ +5 минут
+⏳ +15 минут
+```
+
+---
+
+## ⏳ Delay Handling
+
+On selection:
+
+**Message (RU):**
+
+```text
+⏳ Сдвигаем на 5 минут
+
+Новое время: 10:05
+```
+
+---
+
+### Constraints
+
+* First click wins
+* Lock further changes for 2–3 minutes
+
+---
+
+## 🕒 Scheduler (Cron)
+
+| Event         | Action                   |
+| ------------- | ------------------------ |
+| Friday        | Send invite              |
+| On proposal   | Start auto-confirm timer |
+| Sunday -5 min | Send reminder            |
+| Sunday        | Start call               |
+
+---
+
+## 🧠 Callback Data (Example)
+
+```yaml
+time_select: "time_1100"
+confirm_yes: "yes"
+confirm_no: "no"
+propose_new: "new_time"
+delay_5: "delay_5"
+delay_15: "delay_15"
+```
+
+---
+
+## ⚠️ Error Handling
+
+* Invalid timezone → suggest correct format
+* Invalid time input → retry
+* Missing timezone → prompt user
+
+---
+
+## 🚫 MVP Limitations
+
+* No calendar integrations
+* No availability windows
+* No AI parsing
+* No multi-event support
+
+---
+
+## 🔜 Future Improvements
+
+* Smart time optimization
+* Nudges for non-responders
+* Event history
+* Calendar sync
+
+---
+
+## ✅ Summary
+
+* One canonical time (base timezone)
+* Local display for every user
+* Button-only UX
+* Proposal → confirmation model
+* Auto-confirm fallback
+
+Key constraint:
+
+> No free-text input. No voting. Only structured interaction.
