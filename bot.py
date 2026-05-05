@@ -1,8 +1,9 @@
 import asyncio
+import html
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytz
@@ -13,7 +14,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    GroupHandler,
+    MessageHandler,
+    filters,
 )
 
 from session import Session
@@ -225,7 +227,7 @@ async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /опрос вкл command (admin only)."""
+    """Handle /опрос command (admin only). /опрос вкл or /опрос выкл"""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
@@ -239,43 +241,279 @@ async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Только администратор может это делать.")
         return
 
+    if not context.args:
+        await update.message.reply_text("Формат: `/опрос вкл` или `/опрос выкл`", parse_mode="Markdown")
+        return
+
+    action = context.args[0].lower()
     settings = load_settings()
-    settings["poll_enabled"] = True
+
+    if action == "вкл":
+        settings["poll_enabled"] = True
+        await update.message.reply_text("✅ Еженедельные опросы включены.")
+    elif action == "выкл":
+        settings["poll_enabled"] = False
+        await update.message.reply_text("✅ Еженедельные опросы отключены.")
+    else:
+        await update.message.reply_text("❌ Неизвестный параметр. Используйте: `вкл` или `выкл`", parse_mode="Markdown")
+        return
 
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
 
-    await update.message.reply_text("✅ Еженедельные опросы включены.")
+
+def generate_time_options(base_time_str: str) -> list[str]:
+    """Generate 6 time options: base ± 2h to +3h."""
+    hour, minute = map(int, base_time_str.split(":"))
+    base = datetime.min.replace(hour=hour, minute=minute)
+
+    offsets = [-2, -1, 0, 1, 2, 3]
+    options = []
+    for offset in offsets:
+        dt = base + timedelta(hours=offset)
+        options.append(dt.strftime("%H:%M"))
+
+    return options
 
 
-async def handle_poll_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /опрос выкл command (admin only)."""
+def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
+    """Convert time_str (HH:MM) from from_tz to to_tz and return HH:MM."""
+    try:
+        from_tz = pytz.timezone(from_tz_name)
+        to_tz = pytz.timezone(to_tz_name)
+
+        hour, minute = map(int, time_str.split(":"))
+        dt_from = from_tz.localize(datetime(2026, 5, 5, hour, minute))  # arbitrary date
+        dt_to = dt_from.astimezone(to_tz)
+
+        return dt_to.strftime("%H:%M")
+    except Exception as e:
+        logger.error(f"Time conversion error: {e}")
+        return time_str
+
+
+async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User confirmed the proposed time (button: ✅ Подходит)."""
+    query = update.callback_query
+    await query.answer()
+
     sessions = load_sessions()
-    chat_id = str(update.message.chat_id)
-    user_id = str(update.message.from_user.id)
+    chat_id = str(query.message.chat_id)
+    user_id = str(query.from_user.id)
 
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Только администратор может это делать.")
+    if chat_id not in sessions:
+        await query.edit_message_text("❌ Сессия истекла. Попросите администратора отправить новый опрос.")
         return
 
-    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
-    if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
-        return
+    if query.message.chat.type == "private":
+        # In private chat—user selected a time from options
+        # Extract time from callback data: "time_HHMM"
+        if query.data.startswith("time_"):
+            selected_time = query.data[5:]  # "time_1000" -> "1000"
+            selected_time = f"{selected_time[:2]}:{selected_time[2:]}"  # "1000" -> "10:00"
+            sessions[chat_id]["event"]["current_time"] = selected_time
+            sessions[chat_id]["event"]["proposal_author"] = user_id
+            sessions[chat_id]["event"]["responses"] = {uid: "pending" for uid in sessions[chat_id]["members"].keys()}
+            sessions[chat_id]["event"]["status"] = "proposed"
+            sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
 
-    settings = load_settings()
-    settings["poll_enabled"] = False
+            save_sessions(sessions)
 
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=2)
+            # Private feedback
+            await query.edit_message_text("✅ Принято 👍 Уведомил всех")
 
-    await update.message.reply_text("✅ Еженедельные опросы отключены.")
+            # Notify group
+            if chat_id in sessions:
+                settings = load_settings()
+                base_tz = settings["base_timezone"]
+
+                # Convert selected time to group message context
+                author_name = sessions[chat_id]["members"][user_id]["name"]
+                settings = load_settings()
+                group_text = (
+                    f"{html.escape(author_name)} предлагает новое время:\n\n"
+                    f"➡️ <b>{selected_time}</b>\n\n"
+                    f"Подходит?"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+                ])
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=group_text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify group: {e}")
+    else:
+        # In group chat—user responds to proposal
+        if query.data.startswith("group_yes"):
+            sessions[chat_id]["event"]["responses"][user_id] = "yes"
+            save_sessions(sessions)
+            await query.answer("✅ Спасибо!")
+
+        elif query.data.startswith("group_no"):
+            sessions[chat_id]["event"]["responses"][user_id] = "no"
+            save_sessions(sessions)
+            await query.answer("❌ Записано.")
+
+        elif query.data == "group_propose":
+            # Trigger time proposal UI in private chat
+            settings = load_settings()
+            base_tz_name = settings["base_timezone"]
+            user_tz = sessions[chat_id]["members"][user_id]["timezone"]
+
+            if not user_tz:
+                await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
+                return
+
+            base_time = settings["call_time"]
+            options = generate_time_options(base_time)
+
+            # Convert to user timezone
+            tz_options = []
+            for opt in options:
+                local_time = format_time_in_tz(opt, base_tz_name, user_tz)
+                tz_options.append((opt, local_time))
+
+            text = "Выберите время:\n\n"
+            keyboard_buttons = []
+            for base_opt, local_opt in tz_options:
+                text += f"🕐 {local_opt}\n"
+                button_label = f"🕐 {local_opt}"
+                button_data = f"time_{base_opt.replace(':', '')}"
+                keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
+
+            keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    reply_markup=keyboard
+                )
+                await query.answer("Отправил вам варианты в личное сообщение.")
+            except Exception as e:
+                logger.error(f"Failed to send private message: {e}")
+                await query.answer("❌ Ошибка. Попробуйте еще раз.", alert=True)
 
 
-async def friday_invite_job(context: ContextTypes.DEFAULT_TYPE):
-    """Scheduled job: Send Friday invite to group."""
+async def friday_invite_job(app):
+    """Scheduled job: Send Friday invite to all active chat groups."""
     logger.info("Friday invite job triggered")
-    # Stub for now—Phase 1.5
+
+    sessions = load_sessions()
+    settings = load_settings()
+
+    if not settings.get("poll_enabled", True):
+        logger.info("Polls disabled. Skipping Friday invite.")
+        return
+
+    base_time = settings["call_time"]
+
+    for chat_id, session_data in sessions.items():
+        try:
+            # Reset event state
+            session_data["event"] = {
+                "status": "idle",
+                "proposal_id": None,
+                "current_time": base_time,
+                "proposal_author": None,
+                "deadline": None,
+                "responses": {uid: "pending" for uid in session_data["members"].keys()}
+            }
+
+            text = (
+                f"Созвон в воскресенье:\n\n"
+                f"Базовое время: <b>{base_time}</b>\n\n"
+                f"Подходит?"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+                [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+            ])
+
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            logger.info(f"Friday invite sent to chat {chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send Friday invite to {chat_id}: {e}")
+
+    save_sessions(sessions)
+
+
+async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Friday invite button responses."""
+    query = update.callback_query
+    await query.answer()
+
+    sessions = load_sessions()
+    chat_id = str(query.message.chat_id)
+    user_id = str(query.from_user.id)
+
+    if query.data == "fri_yes":
+        if chat_id in sessions:
+            sessions[chat_id]["event"]["responses"][user_id] = "yes"
+        save_sessions(sessions)
+        await query.answer("✅ Спасибо!")
+
+    elif query.data == "fri_no":
+        if chat_id in sessions:
+            sessions[chat_id]["event"]["responses"][user_id] = "no"
+        save_sessions(sessions)
+        await query.answer("❌ Записано.")
+
+    elif query.data == "fri_propose":
+        # Send time options in private chat
+        if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
+            return
+
+        user_tz = sessions[chat_id]["members"][user_id]["timezone"]
+        if not user_tz:
+            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
+            return
+
+        settings = load_settings()
+        base_time = settings["call_time"]
+        base_tz_name = settings["base_timezone"]
+
+        options = generate_time_options(base_time)
+        tz_options = []
+        for opt in options:
+            local_time = format_time_in_tz(opt, base_tz_name, user_tz)
+            tz_options.append((opt, local_time))
+
+        text = "Выберите время:\n\n"
+        keyboard_buttons = []
+        for base_opt, local_opt in tz_options:
+            text += f"🕐 {local_opt}\n"
+            button_label = f"🕐 {local_opt}"
+            button_data = f"time_{base_opt.replace(':', '')}"
+            keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
+
+        keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=keyboard
+            )
+            await query.answer("Отправил вам варианты в личное сообщение.")
+        except Exception as e:
+            logger.error(f"Failed to send private message: {e}")
+            await query.answer("❌ Ошибка. Попробуйте еще раз.", alert=True)
 
 
 async def set_bot_commands(app):
@@ -284,8 +522,8 @@ async def set_bot_commands(app):
         BotCommand("таймзона", "Установить временную зону"),
         BotCommand("моевремя", "Показать ваше время"),
         BotCommand("помощь", "Список команд"),
-        BotCommand("время", "Обновить время созвона (только администратор)"),
-        BotCommand("опрос", "Включить/отключить опросы (только администратор)"),
+        BotCommand("время", "Обновить время созвона (администратор)"),
+        BotCommand("опрос", "Включить/отключить опросы (администратор)"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -293,7 +531,25 @@ async def set_bot_commands(app):
 async def post_init(app):
     """Called after bot starts."""
     await set_bot_commands(app)
-    logger.info("Bot initialized")
+
+    # Set up scheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.start()
+
+    # Schedule Friday invite at 12:00 (every Friday)
+    scheduler.add_job(
+        friday_invite_job,
+        "cron",
+        day_of_week=4,  # Friday (0=Mon, 4=Fri)
+        hour=12,
+        minute=0,
+        args=[app],
+        id="friday_invite",
+        replace_existing=True
+    )
+
+    logger.info("Scheduler initialized with Friday invite job")
+    app.scheduler = scheduler
 
 
 def main():
@@ -309,15 +565,15 @@ def main():
     app.add_handler(CommandHandler("моевремя", handle_mytime))
     app.add_handler(CommandHandler("помощь", handle_help))
     app.add_handler(CommandHandler("время", handle_time_command))
-    app.add_handler(CommandHandler(["опрос"], handle_poll_on))  # /опрос вкл
-    app.add_handler(CommandHandler(["опрос"], handle_poll_off))  # /опрос выкл
+    app.add_handler(CommandHandler("опрос", handle_poll_on))  # Simplified: just /опрос
+
+    # Callback handlers
+    app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
+    app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^time_"))
+    app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^group_"))
 
     # Post-init hook
     app.post_init = post_init
-
-    # Scheduler (APScheduler)
-    scheduler = AsyncIOScheduler()
-    scheduler.start()
 
     logger.info("Starting bot...")
     app.run_polling(allowed_updates=[
