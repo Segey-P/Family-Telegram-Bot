@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .DS_Store
 .env
+.env.local
 .venv/
 venv/
 *.egg-info/
@@ -10,3 +11,5 @@ dist/
 build/
 .streamlit/secrets.toml
 config/local/
+sessions.json
+*.log

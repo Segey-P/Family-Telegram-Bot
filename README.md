@@ -1,82 +1,142 @@
-# Project Template
+# Family Telegram Bot
 
-This is a template for new projects in the workspace. Copy this directory when starting a new project and customize the files below.
-
----
-
-## For New Projects
-
-When creating a new project, follow these steps:
-
-1. **Copy this template:**
-   ```bash
-   cp -r _template new-project-name
-   cd new-project-name
-   git init
-   ```
-
-2. **Update project files:**
-   - `CLAUDE.md` — Fill in [Project Name], repo slug, stack, etc.
-   - `README.md` — Describe your project (user-facing)
-   - `TODO.md` — Add your first tasks
-
-3. **Create specs/ files:**
-   - Start with `context-agent-instructions.md` (how to work on the project)
-   - Then `spec-requirements.md` (what to build)
-   - Then `plan-phases.md` (how to break it into phases)
-   - Finally `ref-decisions.md` (track decisions made)
-
-4. **Push to GitHub:**
-   ```bash
-   git add -A
-   git commit -m "Initialize [Project Name] from template"
-   git remote add origin https://github.com/Segey-P/repo-slug.git
-   git push -u origin main
-   ```
-
-5. **Update workspace:**
-   - Add the new project to `projects.json` in Project Management Hub
-   - Update the workspace-level `CLAUDE.md` if needed
+Frictionless coordination for weekly family calls across time zones. No voting, no manual calculations—just buttons and timezone awareness.
 
 ---
 
-## Template Contents
+## Features (MVP)
 
-| File | Purpose | Customize |
-|------|---------|-----------|
-| `CLAUDE.md` | Agent instructions | Yes — fill in your project details |
-| `README.md` | User-facing overview | Yes — describe your project |
-| `TODO.md` | Current tasks | Yes — add your first tasks |
-| `specs/context-*.md` | Agent instructions (detailed) | Yes — fill in your tech stack |
-| `specs/spec-*.md` | Requirements & definitions | Yes — define your features |
-| `specs/plan-*.md` | Phases & roadmap | Yes — break into phases |
-| `specs/ref-*.md` | Decisions & reference | Yes — log decisions made |
-| `.gitignore` | Exclude from git | Optional — add project-specific items |
+- ✅ Collect timezone preferences from group members (no hardcoded users)
+- ✅ Display all times in user's local timezone
+- ✅ Friday: Send weekly invite with buttons
+- ✅ Time proposal UI with re-rendering
+- ✅ Automatic confirmation with timeout
+- ✅ Sunday reminder (5 minutes before)
+- ✅ Admin commands for settings
+- ✅ All messages in Russian
 
 ---
 
-## Key Principles
+## Tech Stack
 
-1. **Keep TODO.md clean:** Delete completed items immediately. Only show active/next tasks.
-2. **Read specs first:** Any agent starting work should read `specs/context-*.md` first.
-3. **No secrets in code:** Use environment variables or Streamlit Cloud secrets.
-4. **Push to main:** Feature branches only for large/risky changes.
-5. **Update specs as you go:** Specs are the source of truth for requirements.
-
----
-
-## For Reference
-
-See `/Users/sergeypochikovskiy/AI_workspace/CLAUDE.md` for comprehensive workspace-level guidance on:
-- Code quality standards
-- Git workflow
-- Streamlit patterns
-- Database design decisions
-- Deployment procedures
-- Security checklist
+| Component | Technology |
+|-----------|-----------|
+| Language | Python 3.11+ |
+| Bot Framework | `python-telegram-bot` (v21+) |
+| Timezone handling | `pytz` |
+| Scheduling | `apscheduler` |
+| Storage | `sessions.json` (local, not committed) |
+| Deploy | Oracle Cloud (systemd) |
 
 ---
 
-**Template Version:** 1.0  
-**Last Updated:** 2026-04-28  
-**Maintained By:** Segey-P
+## Local Setup
+
+### 1. Install dependencies
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Get Telegram Bot Token
+
+Create a bot via [@BotFather](https://t.me/botfather) on Telegram and copy the token.
+
+### 3. Create `.env.local`
+
+```bash
+TELEGRAM_BOT_TOKEN=your_token_here
+```
+
+### 4. Run locally
+
+```bash
+python bot.py
+```
+
+The bot will start polling for messages.
+
+---
+
+## Testing (Local)
+
+### 1. Create a test group
+
+Create a private Telegram group with 2–3 people (you + test users).
+
+### 2. Add the bot
+
+Search for your bot in Telegram and add it to the group.
+
+### 3. Test commands
+
+**User commands:**
+- `/таймзона Европа/Берлин` — Set your timezone
+- `/моевремя` — Show your local time + next call time
+- `/помощь` — Show all commands
+
+**Admin commands (first user is admin):**
+- `/время 10:00 Америка/Ванкувер` — Update call time + base timezone
+- `/опрос вкл` — Enable weekly invites
+- `/опрос выкл` — Disable weekly invites
+
+### 4. Verify behavior
+
+- Each user sets timezone independently
+- `/моевремя` displays correct local time
+- No hardcoded user list—bot discovers members dynamically
+- Admin is the first user to set timezone
+
+---
+
+## Specs & Documentation
+
+- **`specs/context-phase1-implementation.md`** — Detailed implementation spec
+- **`specs/plan-phase1.md`** — Phase breakdown and milestones
+- **`TODO.md`** — Current task list (updated as work progresses)
+
+---
+
+## Deployment (Phase 2)
+
+Deployment to Oracle Cloud with systemd service (stub in `deploy/`).
+
+---
+
+## Files
+
+```
+bot/
+├── bot.py                              # Main bot + handlers
+├── session.py                          # Session state management
+├── settings.json                       # Default settings (committed)
+├── sessions.json                       # Runtime sessions (NOT committed)
+├── requirements.txt                    # Dependencies
+├── .gitignore                          # Exclude sessions, .env, venv
+├── README.md                           # This file
+├── CLAUDE.md                           # Agent instructions
+├── AGENTS.md                           # Agent-neutral context
+├── TODO.md                             # Current tasks
+└── specs/
+    ├── context-phase1-implementation.md
+    └── plan-phase1.md
+```
+
+---
+
+## Next Steps
+
+- [ ] Finish M1–M3 (setup, session management, core commands)
+- [ ] Implement M4–M5 (timezone math, Friday invite)
+- [ ] Build M6–M8 (proposal UI, response tracking, auto-confirm)
+- [ ] Test in private group, then move to family group
+
+See `TODO.md` for current progress.
+
+---
+
+**Status:** Phase 1 in progress  
+**Repo:** https://github.com/Segey-P/Family-Telegram-Bot  
+**Last Updated:** 2026-05-05

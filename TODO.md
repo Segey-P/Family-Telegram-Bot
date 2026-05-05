@@ -1,17 +1,13 @@
-# Template — TODO
+# Family Telegram Bot — TODO
 
-This template is complete. Use it as a reference for new projects.
+## Phase 1: MVP (Single Weekly Call Coordination)
 
----
-
-## Guidelines for New Projects
-
-When using this template:
-
-1. **Copy the template** to a new project directory
-2. **Update CLAUDE.md** — fill in your project details (name, repo, stack, etc.)
-3. **Create specs/ files** — start with `context-`, then `spec-`, then `plan-`
-4. **Keep TODO.md clean** — only active items; delete completed ones immediately
-5. **Respect the structure** — use the directory layout provided
-
-See the workspace-level CLAUDE.md for comprehensive best practices and patterns.
+- [ ] M2: Session management (`session.py` utilities)
+- [ ] M3: Core commands (`/таймзона`, `/моевремя`, `/помощь`)
+- [ ] M4: Timezone math validation + conversion
+- [ ] M5: Friday invite scheduler + group message
+- [ ] M6: Time proposal UI (private chat, re-rendering)
+- [ ] M7: Response tracking (yes/no/propose buttons in group)
+- [ ] M8: Auto-confirm timeout logic
+- [ ] M9: Testing in private test group (3 users, different timezones)
+- [ ] M10: Push to main (Phase 1 complete)
