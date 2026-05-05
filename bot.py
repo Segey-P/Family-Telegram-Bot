@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -263,7 +264,7 @@ async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         json.dump(settings, f, indent=2)
 
 
-def resolve_timezone(tz_input: str) -> tuple[str | None, str]:
+def resolve_timezone(tz_input: str) -> Tuple[Optional[str], str]:
     """
     Fuzzy-match timezone input. Returns (resolved_tz_name, error_msg).
     If error_msg is not empty, resolved_tz_name is None.
@@ -290,7 +291,7 @@ def resolve_timezone(tz_input: str) -> tuple[str | None, str]:
         return None, f"❌ Неизвестная временная зона: `{tz_input}`. Примеры: `America/Vancouver`, `Europe/Berlin`, `Asia/Tokyo`"
 
 
-def generate_time_options(base_time_str: str) -> list[str]:
+def generate_time_options(base_time_str: str) -> List[str]:
     """Generate 6 time options: base ± 2h to +3h."""
     hour, minute = map(int, base_time_str.split(":"))
     base = datetime.min.replace(hour=hour, minute=minute)
