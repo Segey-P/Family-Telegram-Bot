@@ -160,22 +160,40 @@ async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
+    sessions = load_sessions()
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    is_admin = False
+    if chat_id in sessions and user_id in sessions[chat_id]["members"]:
+        is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+
     text = (
         "<b>Команды</b>\n\n"
         "<b>Пользователь:</b>\n"
         "<code>/tz Europe/Berlin</code> — установить вашу временную зону\n"
         "<code>/mytime</code> — показать ваше текущее время\n"
         "<code>/help</code> — этот список\n\n"
-        "<b>Администратор:</b>\n"
-        "<code>/time 10:00 America/Vancouver</code> — обновить время созвона\n"
-        "<code>/poll on</code> — включить еженедельные опросы\n"
-        "<code>/poll off</code> — отключить еженедельные опросы\n"
-        "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n\n"
-        "<b>Примеры:</b>\n"
+    )
+
+    if is_admin:
+        text += (
+            "<b>Администратор:</b>\n"
+            "<code>/time 10:00 America/Vancouver</code> — обновить время созвона\n"
+            "<code>/poll on</code> — включить еженедельные опросы\n"
+            "<code>/poll off</code> — отключить еженедельные опросы\n"
+            "<code>/test_mode on</code> — включить тестовый режим (10 мин цикл)\n"
+            "<code>/test_mode off</code> — отключить тестовый режим\n"
+            "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n"
+        )
+
+    text += (
+        "\n<b>Примеры:</b>\n"
         "<code>/tz Europe/Berlin</code>\n"
         "<code>/tz America/Vancouver</code>\n"
         "<code>/mytime</code>"
     )
+
     await update.message.reply_text(text, parse_mode="HTML")
 
 
