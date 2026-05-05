@@ -403,6 +403,74 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await query.answer("❌ Ошибка. Попробуйте еще раз.", alert=True)
 
 
+async def check_autoconfirm_job(app):
+    """Scheduled job: Check for expired deadlines and auto-confirm if no rejections."""
+    logger.info("Auto-confirm check triggered")
+
+    sessions = load_sessions()
+
+    for chat_id, session_data in sessions.items():
+        event = session_data.get("event", {})
+
+        if event.get("status") != "proposed" or not event.get("deadline"):
+            continue
+
+        deadline = datetime.fromisoformat(event["deadline"])
+        now = datetime.now(timezone.utc)
+
+        if now < deadline:
+            continue
+
+        responses = event.get("responses", {})
+        has_rejection = any(r == "no" for r in responses.values())
+
+        if has_rejection:
+            logger.info(f"Chat {chat_id}: Proposal rejected (has 'no' vote)")
+            event["status"] = "idle"
+            continue
+
+        # Auto-confirm
+        event["status"] = "confirmed"
+        confirmed_time = event.get("current_time", "10:00")
+        author_id = event.get("proposal_author")
+
+        confirmed_users = [uid for uid, resp in responses.items() if resp == "yes"]
+        pending_users = [uid for uid, resp in responses.items() if resp == "pending"]
+
+        confirmed_names = [
+            session_data["members"][uid]["name"]
+            for uid in confirmed_users
+            if uid in session_data["members"]
+        ]
+        pending_names = [
+            session_data["members"][uid]["name"]
+            for uid in pending_users
+            if uid in session_data["members"]
+        ]
+
+        confirmed_str = ", ".join(confirmed_names) if confirmed_names else "—"
+        pending_str = ", ".join(pending_names) if pending_names else "—"
+
+        text = (
+            f"✅ Время подтверждено автоматически:\n\n"
+            f"➡️ <b>{confirmed_time}</b>\n\n"
+            f"<b>Подтвердили:</b>\n{confirmed_str}\n\n"
+            f"<b>Ожидаем:</b>\n{pending_str}"
+        )
+
+        try:
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML"
+            )
+            logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
+        except Exception as e:
+            logger.error(f"Failed to send auto-confirm message to {chat_id}: {e}")
+
+    save_sessions(sessions)
+
+
 async def friday_invite_job(app):
     """Scheduled job: Send Friday invite to all active chat groups."""
     logger.info("Friday invite job triggered")
@@ -548,7 +616,17 @@ async def post_init(app):
         replace_existing=True
     )
 
-    logger.info("Scheduler initialized with Friday invite job")
+    # Schedule auto-confirm check every minute
+    scheduler.add_job(
+        check_autoconfirm_job,
+        "interval",
+        minutes=1,
+        args=[app],
+        id="autoconfirm_check",
+        replace_existing=True
+    )
+
+    logger.info("Scheduler initialized with Friday invite + auto-confirm jobs")
     app.scheduler = scheduler
 
 
