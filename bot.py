@@ -433,7 +433,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             sessions[chat_id]["event"]["current_time"] = selected_time
             sessions[chat_id]["event"]["proposal_author"] = user_id
-            sessions[chat_id]["event"]["responses"] = {uid: "pending" for uid in sessions[chat_id]["members"].keys()}
+            # Auto-vote "yes" for the proposer; others are pending
+            sessions[chat_id]["event"]["responses"] = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
             sessions[chat_id]["event"]["status"] = "proposed"
             # In test mode, use 1 minute; otherwise 12 hours
             deadline_delta = timedelta(minutes=1) if load_settings().get("test_mode") else timedelta(hours=12)
@@ -568,8 +569,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
             text = (
                 f"<b>Текущее время:</b>\n"
-                f"Base: <code>{base_time} {base_tz_name}</code>\n"
-                f"Your: <code>{current_local} {user_tz}</code>\n\n"
+                f"Базовое: <code>{base_time} {base_tz_name}</code>\n"
+                f"Ваше: <code>{current_local} {user_tz}</code>\n\n"
                 f"<b>Выберите другое:</b>\n\n"
             )
             keyboard_buttons = []
@@ -621,44 +622,10 @@ async def check_autoconfirm_job(app):
             event["status"] = "idle"
             continue
 
-        # Auto-confirm
+        # Auto-confirm (silently, without sending group message; will include vote info in Sunday reminder)
         event["status"] = "confirmed"
         confirmed_time = event.get("current_time", "10:00")
-        author_id = event.get("proposal_author")
-
-        confirmed_users = [uid for uid, resp in responses.items() if resp == "yes"]
-        pending_users = [uid for uid, resp in responses.items() if resp == "pending"]
-
-        confirmed_names = [
-            session_data["members"][uid]["name"]
-            for uid in confirmed_users
-            if uid in session_data["members"]
-        ]
-        pending_names = [
-            session_data["members"][uid]["name"]
-            for uid in pending_users
-            if uid in session_data["members"]
-        ]
-
-        confirmed_str = ", ".join(confirmed_names) if confirmed_names else "—"
-        pending_str = ", ".join(pending_names) if pending_names else "—"
-
-        text = (
-            f"✅ Время подтверждено автоматически:\n\n"
-            f"➡️ <code>{confirmed_time} {base_tz}</code>\n\n"
-            f"<b>Подтвердили:</b>\n{confirmed_str}\n\n"
-            f"<b>Ожидаем:</b>\n{pending_str}"
-        )
-
-        try:
-            await app.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="HTML"
-            )
-            logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
-        except Exception as e:
-            logger.error(f"Failed to send auto-confirm message to {chat_id}: {e}")
+        logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
 
     save_sessions(sessions)
 
