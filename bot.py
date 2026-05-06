@@ -407,10 +407,24 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
 
+            # Edit message to remove buttons and confirm vote
+            original_text = query.message.text
+            await query.edit_message_text(
+                text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+                parse_mode="HTML"
+            )
+
         elif query.data.startswith("group_no"):
             sessions[chat_id]["event"]["responses"][user_id] = "no"
             save_sessions(sessions)
             await query.answer("❌ Записано.")
+
+            # Edit message to remove buttons and confirm vote
+            original_text = query.message.text
+            await query.edit_message_text(
+                text=f"{original_text}\n\n❌ <b>Ваш голос: Не подходит</b>",
+                parse_mode="HTML"
+            )
 
         elif query.data == "group_propose":
             # Trigger time proposal UI in private chat
@@ -690,11 +704,25 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
 
+        # Edit message to remove buttons and confirm vote
+        original_text = query.message.text
+        await query.edit_message_text(
+            text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+            parse_mode="HTML"
+        )
+
     elif query.data == "fri_no":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "no"
         save_sessions(sessions)
         await query.answer("❌ Записано.")
+
+        # Edit message to remove buttons and confirm vote
+        original_text = query.message.text
+        await query.edit_message_text(
+            text=f"{original_text}\n\n❌ <b>Ваш голос: Не смогу</b>",
+            parse_mode="HTML"
+        )
 
     elif query.data == "fri_propose":
         # Send time options in private chat
