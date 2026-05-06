@@ -339,6 +339,58 @@ def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
         return time_str
 
 
+async def handle_private_change_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User clicked 'change choice' in private chat—show time options again."""
+    query = update.callback_query
+    await query.answer()
+
+    sessions = load_sessions()
+    chat_id = str(query.message.chat_id)
+    user_id = str(query.from_user.id)
+
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await query.edit_message_text("❌ Сессия истекла. Попросите администратора отправить новый опрос.")
+        return
+
+    user_tz = sessions[chat_id]["members"][user_id]["timezone"]
+    if not user_tz:
+        await query.answer("⚠️ Установите вашу временную зону: /tz", alert=True)
+        return
+
+    settings = load_settings()
+    base_time = settings["call_time"]
+    base_tz_name = settings["base_timezone"]
+
+    options = generate_time_options(base_time)
+    tz_options = []
+    for opt in options:
+        local_time = format_time_in_tz(opt, base_tz_name, user_tz)
+        tz_options.append((opt, local_time))
+
+    text = (
+        f"Выберите время:\n"
+        f"<i>(в вашей зоне: {user_tz})</i>\n\n"
+        f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+    )
+    keyboard_buttons = []
+    for base_opt, local_opt in tz_options:
+        button_label = f"🕐 {local_opt}"
+        button_data = f"time_{base_opt.replace(':', '')}"
+        keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
+
+    keyboard = InlineKeyboardMarkup(keyboard_buttons)
+
+    try:
+        await query.edit_message_text(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Failed to edit message: {e}")
+        await query.answer("❌ Ошибка. Попробуйте еще раз.", alert=True)
+
+
 async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User confirmed the proposed time (button: ✅ Подходит)."""
     query = update.callback_query
@@ -368,8 +420,15 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             save_sessions(sessions)
 
-            # Private feedback
-            await query.edit_message_text("✅ Принято 👍 Уведомил всех")
+            # Private feedback with change button
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить время", callback_data="private_change_time")]
+            ])
+            await query.edit_message_text(
+                text=f"✅ Принято 👍\n\n➡️ <b>{selected_time}</b>\n\nУведомил всех",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
 
             # Notify group
             if chat_id in sessions:
@@ -894,6 +953,7 @@ def main():
     app.add_handler(CommandHandler("debug_invite", handle_debug_invite))  # /debug_invite (was /отправить_опрос)
 
     # Callback handlers
+    app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time$"))
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^time_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^group_"))
