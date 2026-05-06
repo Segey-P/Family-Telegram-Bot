@@ -126,14 +126,34 @@ async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ошибка с вашей временной зоной. Переустановите: `/таймзона Европа/Берлин`", parse_mode="Markdown")
         return
 
+    settings = load_settings()
+    base_tz = pytz.timezone(settings["base_timezone"])
+    call_time_str = settings["call_time"]
+
+    # Parse call time (HH:MM)
+    hour, minute = map(int, call_time_str.split(":"))
+
+    # Create a Sunday datetime in base timezone
     now_utc = datetime.now(timezone.utc)
+    now_base = now_utc.astimezone(base_tz)
+
+    # Find next Sunday
+    days_ahead = 6 - now_base.weekday()  # Sunday = 6
+    if days_ahead <= 0:
+        days_ahead += 7
+
+    next_sunday_base = now_base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    next_sunday_base = next_sunday_base.replace(day=next_sunday_base.day + days_ahead)
+
+    # Convert to user timezone
+    next_sunday_user = next_sunday_base.astimezone(user_tz)
     current_user = now_utc.astimezone(user_tz)
 
     text = (
         f"🕐 <b>Ваше текущее время</b>\n"
         f"{current_user.strftime('%H:%M (%Z)')}\n\n"
-        f"🗓️ <b>Воскресенье - созвон</b>\n"
-        f"(см. варианты выше)"
+        f"🗓️ <b>Следующий созвон (воскресенье)</b>\n"
+        f"{next_sunday_user.strftime('%H:%M (%Z)')}"
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -447,15 +467,9 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 local_time = format_time_in_tz(opt, base_tz_name, user_tz)
                 tz_options.append((opt, local_time))
 
-            text = (
-                f"Выберите время:\n\n"
-                f"<b>Ваша зона:</b> <code>{user_tz}</code>\n"
-                f"<b>Базовое время:</b> <code>{base_time} {base_tz_name}</code>\n\n"
-                f"<b>Варианты в вашей зоне:</b>\n\n"
-            )
+            text = "Выберите время:\n\n"
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
-                text += f"🕐 {local_opt}\n"
                 button_label = f"🕐 {local_opt}"
                 button_data = f"time_{base_opt.replace(':', '')}"
                 keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
@@ -766,15 +780,9 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             local_time = format_time_in_tz(opt, base_tz_name, user_tz)
             tz_options.append((opt, local_time))
 
-        text = (
-            f"Выберите время:\n\n"
-            f"<b>Ваша зона:</b> <code>{user_tz}</code>\n"
-            f"<b>Базовое время:</b> <code>{base_time} {base_tz_name}</code>\n\n"
-            f"<b>Варианты в вашей зоне:</b>\n\n"
-        )
+        text = "Выберите время:\n\n"
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
-            text += f"🕐 {local_opt}\n"
             button_label = f"🕐 {local_opt}"
             button_data = f"time_{base_opt.replace(':', '')}"
             keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
