@@ -70,6 +70,34 @@ def get_user_timezone(user_id: str) -> Optional[str]:
     return user_tzs.get(str(user_id))
 
 
+def ensure_member(chat_id: str, user_id: str, name: str, sessions: dict) -> str:
+    """
+    Ensure user exists in session with a valid timezone. Returns their timezone.
+    Priority: existing record → global cache (set via /tz in private chat) → DEFAULT_TIMEZONE.
+    """
+    if chat_id not in sessions:
+        sessions[chat_id] = {
+            "members": {},
+            "event": {"status": "idle"},
+            "last_active": datetime.now(timezone.utc).isoformat()
+        }
+
+    if user_id not in sessions[chat_id]["members"]:
+        tz = get_user_timezone(user_id) or DEFAULT_TIMEZONE
+        sessions[chat_id]["members"][user_id] = {
+            "name": name,
+            "timezone": tz,
+            "first_seen": datetime.now(timezone.utc).isoformat(),
+            "is_admin": len(sessions[chat_id]["members"]) == 0
+        }
+
+    member = sessions[chat_id]["members"][user_id]
+    if not member.get("timezone"):
+        member["timezone"] = get_user_timezone(user_id) or DEFAULT_TIMEZONE
+
+    return member["timezone"]
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start in private chat."""
     user = update.message.from_user
@@ -77,11 +105,11 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "👋 Привет! Я помогу координировать еженедельный созвон.\n\n"
-        "Сначала установите вашу временную зону:\n"
-        "`/tz Europe/Berlin` (или Европа/Берлин)\n\n"
-        "Для справки: `/help`"
+        "По умолчанию ваша временная зона: <code>Europe/Minsk</code>\n"
+        "Чтобы изменить: <code>/tz Europe/Berlin</code>\n\n"
+        "Для справки: /help"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
 async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,7 +143,7 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in sessions[chat_id]["members"]:
         sessions[chat_id]["members"][user_id] = {
             "name": update.message.from_user.first_name or "User",
-            "timezone": None,
+            "timezone": DEFAULT_TIMEZONE,
             "first_seen": datetime.now(timezone.utc).isoformat(),
             "is_admin": len(sessions[chat_id]["members"]) == 0
         }
@@ -342,6 +370,9 @@ def generate_time_options(base_time_str: str) -> List[str]:
     return options
 
 
+DEFAULT_TIMEZONE = "Europe/Minsk"
+
+
 def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
     """Convert time_str (HH:MM) from from_tz to to_tz and return HH:MM."""
     try:
@@ -356,6 +387,19 @@ def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
     except Exception as e:
         logger.error(f"Time conversion error: {e}")
         return time_str
+
+
+def format_all_member_times(time_str: str, base_tz_name: str, members: dict) -> str:
+    """Return a block showing time_str in each member's local timezone."""
+    seen: dict = {}
+    lines = []
+    for member in members.values():
+        tz_name = member.get("timezone") or DEFAULT_TIMEZONE
+        name = html.escape(member.get("name", "User"))
+        if tz_name not in seen:
+            seen[tz_name] = format_time_in_tz(time_str, base_tz_name, tz_name)
+        lines.append(f"• {name}: {seen[tz_name]} ({tz_name})")
+    return "\n".join(lines)
 
 
 async def handle_private_change_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -505,11 +549,13 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Show both proposer's local time and base time
                 proposer_local = format_time_in_tz(selected_time, base_tz, proposer_tz)
                 
+                tz_block = format_all_member_times(selected_time, base_tz, sessions[chat_id]["members"])
                 if sessions[chat_id]["event"]["status"] == "confirmed":
                     group_text = (
                         f"✅ {html.escape(author_name)} установил новое время:\n\n"
                         f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
-                        f"<i>({selected_time} {base_tz})</i>"
+                        f"<i>({selected_time} {base_tz})</i>\n\n"
+                        f"{tz_block}"
                     )
                     keyboard = InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
@@ -519,6 +565,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                         f"{html.escape(author_name)} предлагает новое время:\n\n"
                         f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
                         f"<i>({selected_time} {base_tz})</i>\n\n"
+                        f"{tz_block}\n\n"
                         f"Подходит?"
                     )
                     keyboard = InlineKeyboardMarkup([
@@ -538,6 +585,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                     logger.error(f"Failed to notify group: {e}")
     else:
         # In group chat—user responds to proposal
+        ensure_member(chat_id, user_id, query.from_user.first_name or "User", sessions)
         if query.data.startswith("group_yes"):
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
             
@@ -600,13 +648,10 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         elif query.data == "group_propose":
             # Trigger time proposal UI in private chat
+            ensure_member(chat_id, user_id, query.from_user.first_name or "User", sessions)
             settings = load_settings()
             base_tz_name = settings["base_timezone"]
             user_tz = sessions[chat_id]["members"][user_id]["timezone"]
-
-            if not user_tz:
-                await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-                return
 
             base_time = settings["call_time"]
             options = generate_time_options(base_time)
@@ -713,9 +758,11 @@ async def friday_invite_job(app):
                 "responses": {uid: "pending" for uid in session_data["members"].keys()}
             }
 
+            tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
             text = (
                 f"Созвон в воскресенье:\n\n"
                 f"<b>Базовое время:</b> <code>{base_time} {base_tz}</code>\n\n"
+                f"{tz_block}\n\n"
                 f"Подходит?"
             )
             keyboard = InlineKeyboardMarkup([
@@ -840,6 +887,10 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     sessions = load_sessions()
     chat_id = str(query.message.chat_id)
     user_id = str(query.from_user.id)
+    user_name = query.from_user.first_name or "User"
+
+    # Auto-register user with default timezone if not in session
+    ensure_member(chat_id, user_id, user_name, sessions)
 
     if query.data == "fri_yes":
         if chat_id in sessions:
@@ -906,15 +957,7 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
 
     elif query.data == "fri_propose":
         # Send time options in private chat
-        if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-            return
-
         user_tz = sessions[chat_id]["members"][user_id]["timezone"]
-        if not user_tz:
-            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-            return
-
         settings = load_settings()
         base_time = settings["call_time"]
         base_tz_name = settings["base_timezone"]
