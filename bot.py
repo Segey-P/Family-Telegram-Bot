@@ -375,8 +375,8 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
         f"<b>✅ Текущее время:</b> {current_local_time} {user_tz}\n"
         f"<i>({current_time} {base_tz_name})</i>\n\n"
         f"<b>Выберите другое:</b>\n\n"
-        f"<i>Базовое:</i> <code>{base_time} {base_tz_name}</code>\n"
-        f"<i>Ваша зона:</i> <code>{user_tz}</code>\n\n"
+        f"<code>{base_time} {base_tz_name}</code>\n"
+        f"<code>{user_tz}</code>\n\n"
     )
     keyboard_buttons = []
     for base_opt, local_opt in tz_options:
@@ -433,9 +433,22 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             sessions[chat_id]["event"]["current_time"] = selected_time
             sessions[chat_id]["event"]["proposal_author"] = user_id
+            
             # Auto-vote "yes" for the proposer; others are pending
-            sessions[chat_id]["event"]["responses"] = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
-            sessions[chat_id]["event"]["status"] = "proposed"
+            responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
+            sessions[chat_id]["event"]["responses"] = responses
+            
+            # Auto-accept if proposer is admin or if everyone (e.g. 1 person) already voted yes
+            is_admin = sessions[chat_id]["members"].get(user_id, {}).get("is_admin", False)
+            all_yes = all(r == "yes" for r in responses.values())
+            
+            if all_yes or is_admin:
+                sessions[chat_id]["event"]["status"] = "confirmed"
+                status_text = "Принято"
+            else:
+                sessions[chat_id]["event"]["status"] = "proposed"
+                status_text = "Уведомил всех"
+            
             # In test mode, use 1 minute; otherwise 12 hours
             deadline_delta = timedelta(minutes=1) if load_settings().get("test_mode") else timedelta(hours=12)
             sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
@@ -458,7 +471,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"✅ Принято 👍\n\n"
                     f"➡️ <b>{local_time}</b> {user_tz}\n"
                     f"<i>({selected_time} {base_tz})</i>\n\n"
-                    f"Уведомил всех"
+                    f"{status_text}"
                 ),
                 parse_mode="HTML",
                 reply_markup=keyboard
@@ -466,28 +479,34 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             # Notify group
             if chat_id in sessions:
-                settings = load_settings()
-                base_tz = settings["base_timezone"]
-
                 # Convert selected time to group message context
                 author_name = sessions[chat_id]["members"][user_id]["name"]
                 proposer_tz = sessions[chat_id]["members"][user_id]["timezone"]
-                settings = load_settings()
-                base_tz = settings["base_timezone"]
-
+                
                 # Show both proposer's local time and base time
                 proposer_local = format_time_in_tz(selected_time, base_tz, proposer_tz)
-                group_text = (
-                    f"{html.escape(author_name)} предлагает новое время:\n\n"
-                    f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
-                    f"<i>({selected_time} {base_tz})</i>\n\n"
-                    f"Подходит?"
-                )
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
-                    [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
-                    [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
-                ])
+                
+                if sessions[chat_id]["event"]["status"] == "confirmed":
+                    group_text = (
+                        f"✅ {html.escape(author_name)} установил новое время:\n\n"
+                        f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
+                        f"<i>({selected_time} {base_tz})</i>"
+                    )
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+                    ])
+                else:
+                    group_text = (
+                        f"{html.escape(author_name)} предлагает новое время:\n\n"
+                        f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
+                        f"<i>({selected_time} {base_tz})</i>\n\n"
+                        f"Подходит?"
+                    )
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                        [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                        [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+                    ])
 
                 try:
                     await context.bot.send_message(
@@ -502,19 +521,33 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
         # In group chat—user responds to proposal
         if query.data.startswith("group_yes"):
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
+            
+            # Check for immediate confirmation
+            responses = sessions[chat_id]["event"]["responses"]
+            if all(r == "yes" for r in responses.values()):
+                sessions[chat_id]["event"]["status"] = "confirmed"
+            
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
 
             # Edit message to remove buttons and confirm vote
             original_text = query.message.text
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
-            ])
-            await query.edit_message_text(
-                text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
+            if sessions[chat_id]["event"]["status"] == "confirmed":
+                # Final confirmation for everyone
+                new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>"
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+                ])
+                await query.edit_message_text(text=new_text, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
+                ])
+                await query.edit_message_text(
+                    text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
 
         elif query.data.startswith("group_no"):
             sessions[chat_id]["event"]["responses"][user_id] = "no"
@@ -569,8 +602,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
             text = (
                 f"<b>Текущее время:</b>\n"
-                f"Базовое: <code>{base_time} {base_tz_name}</code>\n"
-                f"Ваше: <code>{current_local} {user_tz}</code>\n\n"
+                f"<code>{base_time} {base_tz_name}</code>\n"
+                f"<code>{current_local} {user_tz}</code>\n\n"
                 f"<b>Выберите другое:</b>\n\n"
             )
             keyboard_buttons = []
@@ -785,19 +818,34 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     if query.data == "fri_yes":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
+            
+            # Check for immediate confirmation
+            responses = sessions[chat_id]["event"]["responses"]
+            if all(r == "yes" for r in responses.values()):
+                sessions[chat_id]["event"]["status"] = "confirmed"
+        
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
 
         # Edit message to remove buttons and confirm vote
         original_text = query.message.text
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
-        ])
-        await query.edit_message_text(
-            text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        if sessions[chat_id]["event"]["status"] == "confirmed":
+            # Final confirmation for everyone - message from friday_invite_job usually says "Подходит?"
+            # But the Friday invite text might vary. Let's be safe.
+            new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить", callback_data="fri_change")]
+            ])
+            await query.edit_message_text(text=new_text, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
+            ])
+            await query.edit_message_text(
+                text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
 
     elif query.data == "fri_no":
         if chat_id in sessions:
@@ -855,8 +903,8 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
         text = (
             f"<b>Текущее время:</b>\n"
-            f"Base: <code>{base_time} {base_tz_name}</code>\n"
-            f"Your: <code>{current_local} {user_tz}</code>\n\n"
+            f"<code>{base_time} {base_tz_name}</code>\n"
+            f"<code>{current_local} {user_tz}</code>\n\n"
             f"<b>Выберите другое:</b>\n\n"
         )
         keyboard_buttons = []

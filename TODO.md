@@ -10,7 +10,8 @@
 - [x] M6: Time proposal UI (private chat, re-rendering, "change choice")
 - [x] M7: Response tracking (yes/no/propose buttons in group)
 - [x] M8: Auto-confirm timeout logic (silently, no group message)
-- [x] UX polish: Russian labels, auto-vote proposer, minimal group messages
+- [x] UX polish: Remove 'Base/Your' labels, immediate auto-accept for admins/proposers
+- [x] Fix: Immediate group message update on full confirmation
 
 ### Testing & Iteration
 - [ ] **M9: Local testing with 3 users, document findings**
