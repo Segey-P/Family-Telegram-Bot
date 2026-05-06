@@ -412,10 +412,25 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if query.message.chat.type == "private":
         # In private chat—user selected a time from options
-        # Extract time from callback data: "time_HHMM"
+        # Extract time and group chat_id from callback data: "time_HHMM_CHATID"
         if query.data.startswith("time_"):
-            selected_time = query.data[5:]  # "time_1000" -> "1000"
-            selected_time = f"{selected_time[:2]}:{selected_time[2:]}"  # "1000" -> "10:00"
+            parts = query.data.split("_")
+            if len(parts) >= 3:
+                # time_HHMM_CHATID format
+                time_str = parts[1]  # "1000"
+                group_chat_id = "_".join(parts[2:])  # handle chat_ids with underscores (e.g., negative numbers)
+            else:
+                # fallback to old format (shouldn't happen after deploy)
+                time_str = query.data[5:]
+                group_chat_id = chat_id
+
+            selected_time = f"{time_str[:2]}:{time_str[2:]}"  # "1000" -> "10:00"
+            chat_id = group_chat_id  # Use the group chat ID
+
+            if chat_id not in sessions:
+                await query.edit_message_text("❌ Сессия истекла. Попросите администратора отправить новый опрос.")
+                return
+
             sessions[chat_id]["event"]["current_time"] = selected_time
             sessions[chat_id]["event"]["proposal_author"] = user_id
             sessions[chat_id]["event"]["responses"] = {uid: "pending" for uid in sessions[chat_id]["members"].keys()}
@@ -455,11 +470,16 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 # Convert selected time to group message context
                 author_name = sessions[chat_id]["members"][user_id]["name"]
+                proposer_tz = sessions[chat_id]["members"][user_id]["timezone"]
                 settings = load_settings()
                 base_tz = settings["base_timezone"]
+
+                # Show both proposer's local time and base time
+                proposer_local = format_time_in_tz(selected_time, base_tz, proposer_tz)
                 group_text = (
                     f"{html.escape(author_name)} предлагает новое время:\n\n"
-                    f"➡️ <code>{selected_time} {base_tz}</code>\n\n"
+                    f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
+                    f"<i>({selected_time} {base_tz})</i>\n\n"
                     f"Подходит?"
                 )
                 keyboard = InlineKeyboardMarkup([
@@ -552,7 +572,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
                 button_label = f"🕐 {local_opt}"
-                button_data = f"time_{base_opt.replace(':', '')}"
+                button_data = f"time_{base_opt.replace(':', '')}_{chat_id}"
                 keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
 
             keyboard = InlineKeyboardMarkup(keyboard_buttons)
@@ -869,7 +889,7 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
             button_label = f"🕐 {local_opt}"
-            button_data = f"time_{base_opt.replace(':', '')}"
+            button_data = f"time_{base_opt.replace(':', '')}_{chat_id}"
             keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
 
         keyboard = InlineKeyboardMarkup(keyboard_buttons)
