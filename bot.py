@@ -430,7 +430,12 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 local_time = format_time_in_tz(opt, base_tz_name, user_tz)
                 tz_options.append((opt, local_time))
 
-            text = "Выберите время:\n\n"
+            text = (
+                f"Выберите время:\n\n"
+                f"<b>Ваша зона:</b> <code>{user_tz}</code>\n"
+                f"<b>Базовое время:</b> <code>{base_time} {base_tz_name}</code>\n\n"
+                f"<b>Варианты в вашей зоне:</b>\n\n"
+            )
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
                 text += f"🕐 {local_opt}\n"
@@ -444,6 +449,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=text,
+                    parse_mode="HTML",
                     reply_markup=keyboard
                 )
                 await query.answer("Отправил вам варианты в личное сообщение.")
@@ -702,7 +708,12 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             local_time = format_time_in_tz(opt, base_tz_name, user_tz)
             tz_options.append((opt, local_time))
 
-        text = "Выберите время:\n\n"
+        text = (
+            f"Выберите время:\n\n"
+            f"<b>Ваша зона:</b> <code>{user_tz}</code>\n"
+            f"<b>Базовое время:</b> <code>{base_time} {base_tz_name}</code>\n\n"
+            f"<b>Варианты в вашей зоне:</b>\n\n"
+        )
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
             text += f"🕐 {local_opt}\n"
@@ -716,6 +727,7 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             await context.bot.send_message(
                 chat_id=user_id,
                 text=text,
+                parse_mode="HTML",
                 reply_markup=keyboard
             )
             await query.answer("Отправил вам варианты в личное сообщение.")

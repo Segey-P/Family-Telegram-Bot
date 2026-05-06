@@ -1,11 +1,11 @@
 {
-  "default_time": "10:00",
+  "default_time": "07:00",
   "base_timezone": "America/Vancouver",
   "poll_enabled": true,
   "poll_day": "Friday",
   "poll_time": "12:00",
   "auto_confirm_hours": 12,
   "call_day": "Sunday",
-  "call_time": "10:00",
-  "test_mode": false
+  "call_time": "07:00",
+  "test_mode": true
 }
