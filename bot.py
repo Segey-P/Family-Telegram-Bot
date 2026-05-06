@@ -126,34 +126,14 @@ async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ошибка с вашей временной зоной. Переустановите: `/таймзона Европа/Берлин`", parse_mode="Markdown")
         return
 
-    settings = load_settings()
-    base_tz = pytz.timezone(settings["base_timezone"])
-    call_time_str = settings["call_time"]
-
-    # Parse call time (HH:MM)
-    hour, minute = map(int, call_time_str.split(":"))
-
-    # Create a Sunday datetime in base timezone
     now_utc = datetime.now(timezone.utc)
-    now_base = now_utc.astimezone(base_tz)
-
-    # Find next Sunday
-    days_ahead = 6 - now_base.weekday()  # Sunday = 6
-    if days_ahead <= 0:
-        days_ahead += 7
-
-    next_sunday_base = now_base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    next_sunday_base = next_sunday_base.replace(day=next_sunday_base.day + days_ahead)
-
-    # Convert to user timezone
-    next_sunday_user = next_sunday_base.astimezone(user_tz)
     current_user = now_utc.astimezone(user_tz)
 
     text = (
         f"🕐 <b>Ваше текущее время</b>\n"
         f"{current_user.strftime('%H:%M (%Z)')}\n\n"
-        f"🗓️ <b>Следующий созвон (воскресенье)</b>\n"
-        f"{next_sunday_user.strftime('%H:%M (%Z)')}"
+        f"🗓️ <b>Воскресенье - созвон</b>\n"
+        f"(см. варианты выше)"
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
