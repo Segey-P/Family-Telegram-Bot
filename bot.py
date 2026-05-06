@@ -70,6 +70,34 @@ def get_user_timezone(user_id: str) -> Optional[str]:
     return user_tzs.get(str(user_id))
 
 
+def ensure_member(chat_id: str, user_id: str, name: str, sessions: dict) -> str:
+    """
+    Ensure user exists in session with a valid timezone. Returns their timezone.
+    Priority: existing record → global cache (set via /tz in private chat) → DEFAULT_TIMEZONE.
+    """
+    if chat_id not in sessions:
+        sessions[chat_id] = {
+            "members": {},
+            "event": {"status": "idle"},
+            "last_active": datetime.now(timezone.utc).isoformat()
+        }
+
+    if user_id not in sessions[chat_id]["members"]:
+        tz = get_user_timezone(user_id) or DEFAULT_TIMEZONE
+        sessions[chat_id]["members"][user_id] = {
+            "name": name,
+            "timezone": tz,
+            "first_seen": datetime.now(timezone.utc).isoformat(),
+            "is_admin": len(sessions[chat_id]["members"]) == 0
+        }
+
+    member = sessions[chat_id]["members"][user_id]
+    if not member.get("timezone"):
+        member["timezone"] = get_user_timezone(user_id) or DEFAULT_TIMEZONE
+
+    return member["timezone"]
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start in private chat."""
     user = update.message.from_user
@@ -557,6 +585,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                     logger.error(f"Failed to notify group: {e}")
     else:
         # In group chat—user responds to proposal
+        ensure_member(chat_id, user_id, query.from_user.first_name or "User", sessions)
         if query.data.startswith("group_yes"):
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
             
@@ -619,13 +648,10 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         elif query.data == "group_propose":
             # Trigger time proposal UI in private chat
+            ensure_member(chat_id, user_id, query.from_user.first_name or "User", sessions)
             settings = load_settings()
             base_tz_name = settings["base_timezone"]
             user_tz = sessions[chat_id]["members"][user_id]["timezone"]
-
-            if not user_tz:
-                await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-                return
 
             base_time = settings["call_time"]
             options = generate_time_options(base_time)
@@ -861,6 +887,10 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     sessions = load_sessions()
     chat_id = str(query.message.chat_id)
     user_id = str(query.from_user.id)
+    user_name = query.from_user.first_name or "User"
+
+    # Auto-register user with default timezone if not in session
+    ensure_member(chat_id, user_id, user_name, sessions)
 
     if query.data == "fri_yes":
         if chat_id in sessions:
@@ -927,15 +957,7 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
 
     elif query.data == "fri_propose":
         # Send time options in private chat
-        if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-            return
-
         user_tz = sessions[chat_id]["members"][user_id]["timezone"]
-        if not user_tz:
-            await query.answer("⚠️ Установите вашу временную зону: /таймзона", alert=True)
-            return
-
         settings = load_settings()
         base_time = settings["call_time"]
         base_tz_name = settings["base_timezone"]
