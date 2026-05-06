@@ -467,7 +467,11 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 local_time = format_time_in_tz(opt, base_tz_name, user_tz)
                 tz_options.append((opt, local_time))
 
-            text = "Выберите время:\n\n"
+            text = (
+                f"Выберите время:\n"
+                f"<i>(в вашей зоне: {user_tz})</i>\n\n"
+                f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+            )
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
                 button_label = f"🕐 {local_opt}"
@@ -780,7 +784,11 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             local_time = format_time_in_tz(opt, base_tz_name, user_tz)
             tz_options.append((opt, local_time))
 
-        text = "Выберите время:\n\n"
+        text = (
+            f"Выберите время:\n"
+            f"<i>(в вашей зоне: {user_tz})</i>\n\n"
+            f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+        )
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
             button_label = f"🕐 {local_opt}"
