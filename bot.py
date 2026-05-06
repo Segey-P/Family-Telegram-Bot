@@ -682,11 +682,8 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Только администратор может это делать. (первый пользователь в группе автоматически администратор)")
         return
 
-    await update.message.reply_text("⏳ Отправляю приглашение на созвон...")
-
-    # Manually trigger Friday invite job
+    # Silently trigger Friday invite job—just send the invite, no extra messages
     await friday_invite_job(context.application)
-    await update.message.reply_text("✅ Приглашение отправлено!")
 
 
 async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
