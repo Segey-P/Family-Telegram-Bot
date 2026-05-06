@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 SETTINGS_FILE = Path("settings.json")
 SESSIONS_FILE = Path("sessions.json")
+USER_TIMEZONES_FILE = Path("user_timezones.json")
 
 
 def load_settings() -> dict:
@@ -47,6 +48,26 @@ def load_sessions() -> dict:
 def save_sessions(sessions: dict):
     with open(SESSIONS_FILE, "w") as f:
         json.dump(sessions, f, indent=2, default=str)
+
+
+def load_user_timezones() -> dict:
+    """Load global user timezone cache (user_id -> timezone)."""
+    if USER_TIMEZONES_FILE.exists():
+        with open(USER_TIMEZONES_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_user_timezones(user_tzs: dict):
+    """Save global user timezone cache."""
+    with open(USER_TIMEZONES_FILE, "w") as f:
+        json.dump(user_tzs, f, indent=2, default=str)
+
+
+def get_user_timezone(user_id: str) -> Optional[str]:
+    """Get user's timezone from global cache or None."""
+    user_tzs = load_user_timezones()
+    return user_tzs.get(str(user_id))
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -102,20 +123,18 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sessions[chat_id]["members"][user_id]["timezone"] = resolved_tz
     save_sessions(sessions)
 
+    user_tzs = load_user_timezones()
+    user_tzs[user_id] = resolved_tz
+    save_user_timezones(user_tzs)
+
     await update.message.reply_text(f"✅ Сохранено: {resolved_tz}")
 
 
 async def handle_mytime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /mytime command."""
-    sessions = load_sessions()
-    chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
-        return
-
-    user_tz_name = sessions[chat_id]["members"][user_id]["timezone"]
+    user_tz_name = get_user_timezone(user_id)
     if not user_tz_name:
         await update.message.reply_text("⚠️ Пожалуйста, установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
         return
@@ -793,9 +812,16 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+    user_tz = get_user_timezone(user_id)
+    if not user_tz:
         await update.message.reply_text("❌ Сначала установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
         return
+
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        sessions = Session.init_chat(chat_id, sessions)
+        sessions = Session.add_member(chat_id, user_id, update.message.from_user.first_name or "User", sessions)
+        sessions[chat_id]["members"][user_id]["timezone"] = user_tz
+        save_sessions(sessions)
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
