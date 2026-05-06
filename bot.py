@@ -544,6 +544,11 @@ async def friday_invite_job(app):
     base_tz = settings["base_timezone"]
 
     for chat_id, session_data in sessions.items():
+        # Skip private chats—only send to groups
+        if int(chat_id) > 0:  # Positive chat_id = private/user chat; negative = group
+            logger.info(f"Skipping private chat {chat_id}")
+            continue
+
         try:
             # Reset event state
             session_data["event"] = {
