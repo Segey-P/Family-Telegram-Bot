@@ -368,9 +368,9 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
         tz_options.append((opt, local_time))
 
     text = (
-        f"Выберите время:\n"
-        f"<i>(в вашей зоне: {user_tz})</i>\n\n"
-        f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+        f"<b>Выберите новое время:</b>\n\n"
+        f"<i>Текущее базовое:</i> <code>{base_time} {base_tz_name}</code>\n"
+        f"<i>Ваша зона:</i> <code>{user_tz}</code>\n\n"
     )
     keyboard_buttons = []
     for base_opt, local_opt in tz_options:
@@ -421,11 +421,23 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_sessions(sessions)
 
             # Private feedback with change button
+            settings = load_settings()
+            base_tz = settings["base_timezone"]
+            user_tz = sessions[chat_id]["members"][user_id]["timezone"]
+
+            # Convert base time to user's local time for display
+            local_time = format_time_in_tz(selected_time, base_tz, user_tz)
+
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Изменить время", callback_data="private_change_time")]
             ])
             await query.edit_message_text(
-                text=f"✅ Принято 👍\n\n➡️ <b>{selected_time}</b>\n\nУведомил всех",
+                text=(
+                    f"✅ Принято 👍\n\n"
+                    f"➡️ <b>{local_time}</b> {user_tz}\n"
+                    f"<i>({selected_time} {base_tz})</i>\n\n"
+                    f"Уведомил всех"
+                ),
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
