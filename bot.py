@@ -310,11 +310,11 @@ def resolve_timezone(tz_input: str) -> Tuple[Optional[str], str]:
 
 
 def generate_time_options(base_time_str: str) -> List[str]:
-    """Generate 6 time options: base ± 2h to +3h."""
+    """Generate 6 time options: base - 1h to + 4h."""
     hour, minute = map(int, base_time_str.split(":"))
     base = datetime.min.replace(hour=hour, minute=minute)
 
-    offsets = [-2, -1, 0, 1, 2, 3]
+    offsets = [-1, 0, 1, 2, 3, 4]
     options = []
     for offset in offsets:
         dt = base + timedelta(hours=offset)
