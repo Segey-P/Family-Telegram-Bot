@@ -1,11 +1,11 @@
 {
-  "default_time": "07:00",
+  "default_time": "17:00",
   "base_timezone": "Europe/Minsk",
   "poll_enabled": true,
   "poll_day": "Friday",
   "poll_time": "12:00",
   "auto_confirm_hours": 12,
   "call_day": "Sunday",
-  "call_time": "07:00",
+  "call_time": "17:00",
   "test_mode": true
 }
