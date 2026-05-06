@@ -409,9 +409,13 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             # Edit message to remove buttons and confirm vote
             original_text = query.message.text
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
+            ])
             await query.edit_message_text(
                 text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=keyboard
             )
 
         elif query.data.startswith("group_no"):
@@ -421,10 +425,28 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             # Edit message to remove buttons and confirm vote
             original_text = query.message.text
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
+            ])
             await query.edit_message_text(
                 text=f"{original_text}\n\n❌ <b>Ваш голос: Не подходит</b>",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=keyboard
             )
+
+        elif query.data == "group_change":
+            # Show original 3 buttons again to change vote
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+            ])
+            await query.edit_message_text(
+                text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0],  # Remove vote confirmation
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            await query.answer("Выберите новый вариант")
 
         elif query.data == "group_propose":
             # Trigger time proposal UI in private chat
@@ -703,9 +725,13 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
 
         # Edit message to remove buttons and confirm vote
         original_text = query.message.text
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
+        ])
         await query.edit_message_text(
             text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
 
     elif query.data == "fri_no":
@@ -716,10 +742,28 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
 
         # Edit message to remove buttons and confirm vote
         original_text = query.message.text
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
+        ])
         await query.edit_message_text(
             text=f"{original_text}\n\n❌ <b>Ваш голос: Не смогу</b>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
+
+    elif query.data == "fri_change":
+        # Show original 3 buttons again to change vote
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+            [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+            [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+        ])
+        await query.edit_message_text(
+            text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0],  # Remove vote confirmation
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await query.answer("Выберите новый вариант")
 
     elif query.data == "fri_propose":
         # Send time options in private chat
