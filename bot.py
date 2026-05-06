@@ -564,10 +564,13 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 local_time = format_time_in_tz(opt, base_tz_name, user_tz)
                 tz_options.append((opt, local_time))
 
+            # Show current base time and its conversion to user's timezone
+            current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
             text = (
-                f"Выберите время:\n"
-                f"<i>(в вашей зоне: {user_tz})</i>\n\n"
-                f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+                f"<b>Текущее время:</b>\n"
+                f"Base: <code>{base_time} {base_tz_name}</code>\n"
+                f"Your: <code>{current_local} {user_tz}</code>\n\n"
+                f"<b>Выберите другое:</b>\n\n"
             )
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
@@ -881,10 +884,13 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             local_time = format_time_in_tz(opt, base_tz_name, user_tz)
             tz_options.append((opt, local_time))
 
+        # Show current base time and its conversion to user's timezone
+        current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
         text = (
-            f"Выберите время:\n"
-            f"<i>(в вашей зоне: {user_tz})</i>\n\n"
-            f"<b>Базовое время:</b> {base_time} {base_tz_name}\n\n"
+            f"<b>Текущее время:</b>\n"
+            f"Base: <code>{base_time} {base_tz_name}</code>\n"
+            f"Your: <code>{current_local} {user_tz}</code>\n\n"
+            f"<b>Выберите другое:</b>\n\n"
         )
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
