@@ -361,6 +361,10 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
     base_time = settings["call_time"]
     base_tz_name = settings["base_timezone"]
 
+    # Get the current selected time to show in the message
+    current_time = sessions[chat_id]["event"].get("current_time", base_time)
+    current_local_time = format_time_in_tz(current_time, base_tz_name, user_tz)
+
     options = generate_time_options(base_time)
     tz_options = []
     for opt in options:
@@ -368,8 +372,10 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
         tz_options.append((opt, local_time))
 
     text = (
-        f"<b>Выберите новое время:</b>\n\n"
-        f"<i>Текущее базовое:</i> <code>{base_time} {base_tz_name}</code>\n"
+        f"<b>✅ Текущее время:</b> {current_local_time} {user_tz}\n"
+        f"<i>({current_time} {base_tz_name})</i>\n\n"
+        f"<b>Выберите другое:</b>\n\n"
+        f"<i>Базовое:</i> <code>{base_time} {base_tz_name}</code>\n"
         f"<i>Ваша зона:</i> <code>{user_tz}</code>\n\n"
     )
     keyboard_buttons = []
