@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 SETTINGS_FILE = Path("settings.json")
 SESSIONS_FILE = Path("sessions.json")
 USER_TIMEZONES_FILE = Path("user_timezones.json")
+PENDING_PROPOSALS_FILE = Path("pending_proposals.json")
 
 
 def load_settings() -> dict:
@@ -62,6 +64,47 @@ def save_user_timezones(user_tzs: dict):
     """Save global user timezone cache."""
     with open(USER_TIMEZONES_FILE, "w") as f:
         json.dump(user_tzs, f, indent=2, default=str)
+
+
+def load_pending_proposals() -> dict:
+    """user_id → group_chat_id: tracks who is mid-proposal."""
+    if PENDING_PROPOSALS_FILE.exists():
+        with open(PENDING_PROPOSALS_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_pending_proposals(pending: dict):
+    with open(PENDING_PROPOSALS_FILE, "w") as f:
+        json.dump(pending, f, indent=2)
+
+
+def parse_time_input(text: str) -> Optional[str]:
+    """
+    Parse flexible time strings typed by users → HH:MM or None.
+    Accepts: 7:20  7.20  7 20  720  19:30  07:20  9
+    """
+    text = text.strip()
+    # HH:MM, HH.MM, HH MM
+    m = re.match(r'^(\d{1,2})[:\. ](\d{2})$', text)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return f"{h:02d}:{mn:02d}"
+    # HHMM (e.g. 720 → 07:20, 1930 → 19:30)
+    m = re.match(r'^(\d{3,4})$', text)
+    if m:
+        raw = m.group(1).zfill(4)
+        h, mn = int(raw[:2]), int(raw[2:])
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return f"{h:02d}:{mn:02d}"
+    # Plain hour (e.g. "9" → 09:00)
+    m = re.match(r'^(\d{1,2})$', text)
+    if m:
+        h = int(m.group(1))
+        if 0 <= h <= 23:
+            return f"{h:02d}:00"
+    return None
 
 
 def get_user_timezone(user_id: str) -> Optional[str]:
@@ -668,7 +711,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"<b>Текущее время:</b>\n"
                 f"<code>{base_time} {base_tz_name}</code>\n"
                 f"<code>{current_local} {user_tz}</code>\n\n"
-                f"<b>Выберите другое:</b>\n\n"
+                f"<b>Выберите время или напишите своё</b> (в вашем часовом поясе):\n"
+                f"<i>Примеры: 7:20 · 7.20 · 7 20 · 19:30</i>\n\n"
             )
             keyboard_buttons = []
             for base_opt, local_opt in tz_options:
@@ -685,6 +729,9 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
+                pending = load_pending_proposals()
+                pending[user_id] = chat_id
+                save_pending_proposals(pending)
                 await query.answer("Отправил вам варианты в личное сообщение.")
             except Exception as e:
                 logger.error(f"Failed to send private message: {e}")
@@ -974,7 +1021,8 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             f"<b>Текущее время:</b>\n"
             f"<code>{base_time} {base_tz_name}</code>\n"
             f"<code>{current_local} {user_tz}</code>\n\n"
-            f"<b>Выберите другое:</b>\n\n"
+            f"<b>Выберите время или напишите своё</b> (в вашем часовом поясе):\n"
+            f"<i>Примеры: 7:20 · 7.20 · 7 20 · 19:30</i>\n\n"
         )
         keyboard_buttons = []
         for base_opt, local_opt in tz_options:
@@ -991,10 +1039,134 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+            pending = load_pending_proposals()
+            pending[user_id] = chat_id
+            save_pending_proposals(pending)
             await query.answer("Отправил вам варианты в личное сообщение.")
         except Exception as e:
             logger.error(f"Failed to send private message: {e}")
             await query.answer("❌ Ошибка. Попробуйте еще раз.", alert=True)
+
+
+async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle free-form time typed in private chat as a proposal (e.g. '7:20', '7.20', '7 20')."""
+    if not update.message or update.message.chat.type != "private":
+        return
+
+    text = (update.message.text or "").strip()
+    user_id = str(update.message.from_user.id)
+
+    time_str = parse_time_input(text)
+    if not time_str:
+        return  # Not a time input — ignore silently
+
+    pending = load_pending_proposals()
+    group_chat_id = pending.get(user_id)
+    if not group_chat_id:
+        return  # User isn't mid-proposal — ignore silently
+
+    sessions = load_sessions()
+    settings = load_settings()
+    base_tz_name = settings["base_timezone"]
+
+    if group_chat_id not in sessions:
+        await update.message.reply_text("❌ Сессия истекла. Попросите администратора отправить новый опрос.")
+        return
+
+    user_tz_name = (
+        sessions[group_chat_id].get("members", {}).get(user_id, {}).get("timezone")
+        or get_user_timezone(user_id)
+        or DEFAULT_TIMEZONE
+    )
+
+    # Convert typed time (user's local tz) → base timezone
+    try:
+        user_tz = pytz.timezone(user_tz_name)
+        base_tz_obj = pytz.timezone(base_tz_name)
+        h, mn = map(int, time_str.split(":"))
+        dt_user = user_tz.localize(datetime(2026, 5, 5, h, mn))
+        base_time_str = dt_user.astimezone(base_tz_obj).strftime("%H:%M")
+    except Exception as e:
+        logger.error(f"Time text input conversion error: {e}")
+        await update.message.reply_text("❌ Не удалось конвертировать время.")
+        return
+
+    # Apply proposal
+    sessions[group_chat_id]["event"]["current_time"] = base_time_str
+    sessions[group_chat_id]["event"]["proposal_author"] = user_id
+    responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[group_chat_id]["members"].keys()}
+    sessions[group_chat_id]["event"]["responses"] = responses
+
+    is_admin = sessions[group_chat_id]["members"].get(user_id, {}).get("is_admin", False)
+    all_yes = all(r == "yes" for r in responses.values())
+
+    if all_yes or is_admin:
+        sessions[group_chat_id]["event"]["status"] = "confirmed"
+        status_text = "Принято"
+    else:
+        sessions[group_chat_id]["event"]["status"] = "proposed"
+        status_text = "Уведомил всех"
+
+    deadline_delta = timedelta(minutes=1) if settings.get("test_mode") else timedelta(hours=12)
+    sessions[group_chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
+
+    save_sessions(sessions)
+
+    # Clear pending proposal
+    pending.pop(user_id, None)
+    save_pending_proposals(pending)
+
+    # Private feedback
+    local_time = format_time_in_tz(base_time_str, base_tz_name, user_tz_name)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Изменить время", callback_data="private_change_time")]
+    ])
+    await update.message.reply_text(
+        f"✅ Принято 👍\n\n"
+        f"➡️ <b>{local_time}</b> {user_tz_name}\n"
+        f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+        f"{status_text}",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    # Notify group
+    author_name = sessions[group_chat_id]["members"].get(user_id, {}).get("name", "User")
+    tz_block = format_all_member_times(base_time_str, base_tz_name, sessions[group_chat_id]["members"])
+
+    if sessions[group_chat_id]["event"]["status"] == "confirmed":
+        group_text = (
+            f"✅ {html.escape(author_name)} установил новое время:\n\n"
+            f"➡️ <code>{local_time} {user_tz_name}</code>\n"
+            f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+            f"{tz_block}"
+        )
+        group_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+        ])
+    else:
+        group_text = (
+            f"{html.escape(author_name)} предлагает новое время:\n\n"
+            f"➡️ <code>{local_time} {user_tz_name}</code>\n"
+            f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+            f"{tz_block}\n\n"
+            f"Подходит?"
+        )
+        group_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{group_chat_id}_{user_id}")],
+            [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{group_chat_id}_{user_id}")],
+            [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+        ])
+
+    try:
+        await context.bot.send_message(
+            chat_id=group_chat_id,
+            text=group_text,
+            parse_mode="HTML",
+            reply_markup=group_keyboard
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify group from text proposal: {e}")
 
 
 async def set_bot_commands(app):
@@ -1085,6 +1257,9 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^time_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^group_"))
+
+    # Free-text time input in private chat (e.g. "7:20", "7.20", "7 20")
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_time_text_input))
 
     # Post-init hook
     app.post_init = post_init
