@@ -1,6 +1,6 @@
 {
   "default_time": "07:00",
-  "base_timezone": "America/Vancouver",
+  "base_timezone": "Europe/Minsk",
   "poll_enabled": true,
   "poll_day": "Friday",
   "poll_time": "12:00",

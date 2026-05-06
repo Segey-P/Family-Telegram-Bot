@@ -379,9 +379,10 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Convert selected time to group message context
                 author_name = sessions[chat_id]["members"][user_id]["name"]
                 settings = load_settings()
+                base_tz = settings["base_timezone"]
                 group_text = (
                     f"{html.escape(author_name)} предлагает новое время:\n\n"
-                    f"➡️ <b>{selected_time}</b>\n\n"
+                    f"➡️ <code>{selected_time} {base_tz}</code>\n\n"
                     f"Подходит?"
                 )
                 keyboard = InlineKeyboardMarkup([
@@ -463,6 +464,8 @@ async def check_autoconfirm_job(app):
     logger.info("Auto-confirm check triggered")
 
     sessions = load_sessions()
+    settings = load_settings()
+    base_tz = settings["base_timezone"]
 
     for chat_id, session_data in sessions.items():
         event = session_data.get("event", {})
@@ -508,7 +511,7 @@ async def check_autoconfirm_job(app):
 
         text = (
             f"✅ Время подтверждено автоматически:\n\n"
-            f"➡️ <b>{confirmed_time}</b>\n\n"
+            f"➡️ <code>{confirmed_time} {base_tz}</code>\n\n"
             f"<b>Подтвердили:</b>\n{confirmed_str}\n\n"
             f"<b>Ожидаем:</b>\n{pending_str}"
         )
@@ -538,6 +541,7 @@ async def friday_invite_job(app):
         return
 
     base_time = settings["call_time"]
+    base_tz = settings["base_timezone"]
 
     for chat_id, session_data in sessions.items():
         try:
@@ -553,7 +557,7 @@ async def friday_invite_job(app):
 
             text = (
                 f"Созвон в воскресенье:\n\n"
-                f"Базовое время: <b>{base_time}</b>\n\n"
+                f"<b>Базовое время:</b> <code>{base_time} {base_tz}</code>\n\n"
                 f"Подходит?"
             )
             keyboard = InlineKeyboardMarkup([
