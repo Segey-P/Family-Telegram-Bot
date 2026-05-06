@@ -32,19 +32,26 @@
   - No intermediate auto-confirm messages (already removed)
 
 ## Phase 2: Deployment + Multi-User Testing
-- [ ] **P2-A: Oracle Cloud VM setup**
-  - Provision VPS with public IP
-  - Setup systemd service (auto-restart)
-  - Configure logging (daily rotation)
-  - Use environment variables for secrets
+- [x] **P2-A: Oracle Cloud VM setup** ✅ COMPLETE
+  - [x] Created deployment script (`scripts/deploy_vm.sh`)
+  - [x] Created deployment guide (`VM_DEPLOYMENT.md`)
+  - [x] Merged to main (PR #1)
+  - Next: Run deployment script on VM with bot token
   
+- [ ] **P2-A-verify: Deployment verification**
+  - [ ] Run `bash deploy_family_bot.sh <TOKEN>` on Oracle VM
+  - [ ] Verify service is running: `sudo systemctl status family-telegram-bot`
+  - [ ] Check logs for startup: `sudo journalctl -u family-telegram-bot -f`
+  - [ ] Test bot responds to `/help` command in test group
+
 - [ ] **P2-B: Testing with full family group (5+ users)**
-  - Add real family members to production bot
-  - Run 2–3 full weekly cycles
-  - Monitor for edge cases (concurrent votes, timezone bugs, etc.)
-  - Collect feedback
+  - [ ] Add real family members to production bot group
+  - [ ] Run 2–3 full weekly cycles (Friday invite → voting → Sunday reminder)
+  - [ ] Monitor for edge cases (concurrent votes, timezone bugs, etc.)
+  - [ ] Document findings in `docs/phase2-testing-log.md`
+  - [ ] Collect feedback from family members
 
 - [ ] P2-C: Enhancements (if time)
-  - Delay button handling (first click wins, 2-3 min lock)
-  - Transfer admin command (`/makeadmin @username`)
-  - Recurrence settings (weekly, bi-weekly, monthly)
+  - [ ] Delay button handling (first click wins, 2-3 min lock)
+  - [ ] Transfer admin command (`/makeadmin @username`)
+  - [ ] Recurrence settings (weekly, bi-weekly, monthly)
