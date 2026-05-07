@@ -984,7 +984,6 @@ async def friday_invite_job(app):
             
             text = (
                 f"Созвон в воскресенье:\n\n"
-                f"<b>Базовое время:</b> <code>{base_time} {base_tz}</code>\n\n"
                 f"{tz_block}\n\n"
                 f"Подходит?\n\n"
                 f"{vote_status}"
