@@ -1333,8 +1333,7 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     if sessions[group_chat_id]["event"]["status"] == "confirmed":
         group_text = (
             f"✅ {html.escape(author_name)} установил новое время:\n\n"
-            f"➡️ <code>{local_time} {user_tz_name}</code>\n"
-            f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+            f"➡️ <code>{local_time} {user_tz_name}</code>\n\n"
             f"{tz_block}"
         )
         group_keyboard = InlineKeyboardMarkup([
@@ -1343,8 +1342,7 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     else:
         group_text = (
             f"{html.escape(author_name)} предлагает новое время:\n\n"
-            f"➡️ <code>{local_time} {user_tz_name}</code>\n"
-            f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+            f"➡️ <code>{local_time} {user_tz_name}</code>\n\n"
             f"{tz_block}\n\n"
             f"Подходит?"
         )
