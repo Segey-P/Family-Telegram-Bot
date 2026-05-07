@@ -439,12 +439,24 @@ def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
         return time_str
 
 
-def format_all_member_times(time_str: str, base_tz_name: str, members: dict) -> str:
+def format_all_member_times(time_str: str, base_tz_name: str, members: dict, user_id_to_refresh: str = None) -> str:
     """Return a block showing time_str in each member's local timezone."""
     seen: dict = {}
     lines = []
-    for member in members.values():
-        tz_name = member.get("timezone") or DEFAULT_TIMEZONE
+    
+    # Load global cache to verify/update timezones on the fly
+    user_tzs = load_user_timezones()
+    
+    for uid, member in members.items():
+        # Force refresh from global cache if global has a TZ but member record is default/missing
+        global_tz = user_tzs.get(str(uid))
+        current_tz = member.get("timezone")
+        
+        if global_tz and (not current_tz or current_tz == DEFAULT_TIMEZONE):
+            member["timezone"] = global_tz
+            current_tz = global_tz
+            
+        tz_name = current_tz or DEFAULT_TIMEZONE
         name = html.escape(member.get("name", "User"))
         if tz_name not in seen:
             seen[tz_name] = format_time_in_tz(time_str, base_tz_name, tz_name)
