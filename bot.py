@@ -116,7 +116,7 @@ def get_user_timezone(user_id: str) -> Optional[str]:
 def ensure_member(chat_id: str, user_id: str, name: str, sessions: dict) -> str:
     """
     Ensure user exists in session with a valid timezone. Returns their timezone.
-    Priority: existing record → global cache (set via /tz in private chat) → DEFAULT_TIMEZONE.
+    Priority: global cache (set via /tz in private chat) → existing record → DEFAULT_TIMEZONE.
     """
     if chat_id not in sessions:
         sessions[chat_id] = {
@@ -125,20 +125,23 @@ def ensure_member(chat_id: str, user_id: str, name: str, sessions: dict) -> str:
             "last_active": datetime.now(timezone.utc).isoformat()
         }
 
+    global_tz = get_user_timezone(user_id)
+    
     if user_id not in sessions[chat_id]["members"]:
-        tz = get_user_timezone(user_id) or DEFAULT_TIMEZONE
+        tz = global_tz or DEFAULT_TIMEZONE
         sessions[chat_id]["members"][user_id] = {
             "name": name,
             "timezone": tz,
             "first_seen": datetime.now(timezone.utc).isoformat(),
             "is_admin": len(sessions[chat_id]["members"]) == 0
         }
+    else:
+        # If member exists but their timezone is default or missing, try updating from global cache
+        member = sessions[chat_id]["members"][user_id]
+        if global_tz and (not member.get("timezone") or member.get("timezone") == DEFAULT_TIMEZONE):
+            member["timezone"] = global_tz
 
-    member = sessions[chat_id]["members"][user_id]
-    if not member.get("timezone"):
-        member["timezone"] = get_user_timezone(user_id) or DEFAULT_TIMEZONE
-
-    return member["timezone"]
+    return sessions[chat_id]["members"][user_id]["timezone"]
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,7 +194,11 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "is_admin": len(sessions[chat_id]["members"]) == 0
         }
 
-    sessions[chat_id]["members"][user_id]["timezone"] = resolved_tz
+    # Sync this new timezone across all group sessions where the user is a member
+    for s_chat_id, session_data in sessions.items():
+        if user_id in session_data.get("members", {}):
+            session_data["members"][user_id]["timezone"] = resolved_tz
+
     save_sessions(sessions)
 
     user_tzs = load_user_timezones()
