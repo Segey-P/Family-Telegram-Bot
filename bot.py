@@ -1424,11 +1424,12 @@ async def post_init(app):
 
     # Schedule Call Presence / Delay Check
     if test_mode:
-        # Test mode: run every 10 min, offset by 7 min from invite
+        # Test mode: run every 10 min, start 7 min after launch so it fires 3 min before next invite
         scheduler.add_job(
             call_presence_check_job,
             "interval",
             minutes=10,
+            start_date=datetime.now(timezone.utc) + timedelta(minutes=7),
             args=[app],
             id="presence_check",
             replace_existing=True
