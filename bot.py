@@ -625,12 +625,21 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ])
 
                 try:
-                    await context.bot.send_message(
+                    # Cleanup previous poll if it exists
+                    if sessions[chat_id]["event"].get("last_poll_id"):
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=sessions[chat_id]["event"]["last_poll_id"])
+                        except:
+                            pass
+
+                    msg = await context.bot.send_message(
                         chat_id=chat_id,
                         text=group_text,
                         parse_mode="HTML",
                         reply_markup=keyboard
                     )
+                    sessions[chat_id]["event"]["last_poll_id"] = msg.message_id
+                    save_sessions(sessions)
                 except Exception as e:
                     logger.error(f"Failed to notify group: {e}")
     else:
@@ -795,10 +804,35 @@ async def check_autoconfirm_job(app):
             event["status"] = "idle"
             continue
 
-        # Auto-confirm (silently, without sending group message; will include vote info in Sunday reminder)
+        # Auto-confirm
         event["status"] = "confirmed"
-        confirmed_time = event.get("current_time", "10:00")
+        confirmed_time = event.get("current_time", settings["call_time"])
         logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
+
+        # Update the poll message in the group to show confirmation
+        if event.get("last_poll_id"):
+            try:
+                vote_status = get_responses_text(event.get("responses", {}), session_data["members"])
+                tz_block = format_all_member_times(confirmed_time, base_tz, session_data["members"])
+                
+                text = (
+                    f"✅ <b>Время автоматически подтверждено!</b>\n\n"
+                    f"🕒 <code>{confirmed_time} {base_tz}</code>\n\n"
+                    f"{tz_block}\n\n"
+                    f"{vote_status}"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+                ])
+                await app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=event["last_poll_id"],
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.error(f"Failed to update auto-confirmed message in {chat_id}: {e}")
 
     save_sessions(sessions)
 
@@ -870,9 +904,17 @@ async def friday_invite_job(app):
                 "current_time": base_time,
                 "proposal_author": None,
                 "deadline": None,
-                "responses": {uid: "pending" for uid in session_data["members"].keys()}
+                "responses": {uid: "pending" for uid in session_data["members"].keys()},
+                "last_poll_id": session_data["event"].get("last_poll_id") if "event" in session_data else None
             }
             save_sessions(sessions)
+
+            # Cleanup previous message if exists
+            if session_data["event"].get("last_poll_id"):
+                try:
+                    await app.bot.delete_message(chat_id=chat_id, message_id=session_data["event"]["last_poll_id"])
+                except Exception as e:
+                    logger.warning(f"Failed to delete old message in {chat_id}: {e}")
 
             tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
             vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
@@ -890,12 +932,14 @@ async def friday_invite_job(app):
                 [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
             ])
 
-            await app.bot.send_message(
+            msg = await app.bot.send_message(
                 chat_id=chat_id,
                 text=text,
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+            session_data["event"]["last_poll_id"] = msg.message_id
+            save_sessions(sessions)
             logger.info(f"Friday invite sent to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send Friday invite to {chat_id}: {e}")
@@ -1277,12 +1321,21 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
         ])
 
     try:
-        await context.bot.send_message(
+        # Cleanup previous poll if it exists
+        if sessions[group_chat_id]["event"].get("last_poll_id"):
+            try:
+                await context.bot.delete_message(chat_id=group_chat_id, message_id=sessions[group_chat_id]["event"]["last_poll_id"])
+            except:
+                pass
+
+        msg = await context.bot.send_message(
             chat_id=group_chat_id,
             text=group_text,
             parse_mode="HTML",
             reply_markup=group_keyboard
         )
+        sessions[group_chat_id]["event"]["last_poll_id"] = msg.message_id
+        save_sessions(sessions)
     except Exception as e:
         logger.error(f"Failed to notify group from text proposal: {e}")
 
