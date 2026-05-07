@@ -640,21 +640,25 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
 
-            # Edit message to remove buttons and confirm vote
-            original_text = query.message.text
+            # Edit message to update vote list
+            original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0]
+            vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+            
             if sessions[chat_id]["event"]["status"] == "confirmed":
                 # Final confirmation for everyone
-                new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>"
+                new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>\n\n" + vote_status
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
                 ])
                 await query.edit_message_text(text=new_text, parse_mode="HTML", reply_markup=keyboard)
             else:
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
+                    [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
                 ])
                 await query.edit_message_text(
-                    text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+                    text=f"{original_text}\n\n{vote_status}",
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
@@ -664,30 +668,35 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_sessions(sessions)
             await query.answer("❌ Записано.")
 
-            # Edit message to remove buttons and confirm vote
-            original_text = query.message.text
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="group_change")]
-            ])
-            await query.edit_message_text(
-                text=f"{original_text}\n\n❌ <b>Ваш голос: Не подходит</b>",
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-
-        elif query.data == "group_change":
-            # Show original 3 buttons again to change vote
+            # Edit message to update vote list
+            original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0]
+            vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+            
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
                 [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
                 [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
             ])
             await query.edit_message_text(
-                text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0],  # Remove vote confirmation
+                text=f"{original_text}\n\n{vote_status}",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
-            await query.answer("Выберите новый вариант")
+
+        elif query.data == "group_change":
+            # Just refresh the vote list
+            vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+            ])
+            await query.edit_message_text(
+                text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0] + f"\n\n{vote_status}",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            await query.answer()
 
         elif query.data == "group_propose":
             # Trigger time proposal UI in private chat
@@ -774,6 +783,45 @@ async def check_autoconfirm_job(app):
     save_sessions(sessions)
 
 
+async def sunday_reminder_job(app):
+    """Scheduled job: Send Sunday reminder 5 minutes before the call."""
+    logger.info("Sunday reminder job triggered")
+
+    sessions = load_sessions()
+    settings = load_settings()
+    base_tz = settings["base_timezone"]
+
+    for chat_id, session_data in sessions.items():
+        # Skip private chats
+        if int(chat_id) > 0:
+            continue
+
+        event = session_data.get("event", {})
+        if event.get("status") != "confirmed":
+            logger.info(f"Skipping reminder for chat {chat_id}: status is {event.get('status')}")
+            continue
+
+        call_time = event.get("current_time", settings["call_time"])
+        responses = event.get("responses", {})
+        vote_status = get_responses_text(responses, session_data["members"])
+
+        text = (
+            f"⏰ <b>Созвон через 5 минут!</b>\n\n"
+            f"🕒 Время: <code>{call_time} {base_tz}</code>\n\n"
+            f"<b>Кто будет:</b>\n{vote_status or 'Все подтвердили!'}"
+        )
+
+        try:
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML"
+            )
+            logger.info(f"Sunday reminder sent to chat {chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send Sunday reminder to {chat_id}: {e}")
+
+
 async def friday_invite_job(app):
     """Scheduled job: Send Friday invite to all active chat groups."""
     logger.info("Friday invite job triggered")
@@ -804,13 +852,17 @@ async def friday_invite_job(app):
                 "deadline": None,
                 "responses": {uid: "pending" for uid in session_data["members"].keys()}
             }
+            save_sessions(sessions)
 
             tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
+            vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
+            
             text = (
                 f"Созвон в воскресенье:\n\n"
                 f"<b>Базовое время:</b> <code>{base_time} {base_tz}</code>\n\n"
                 f"{tz_block}\n\n"
-                f"Подходит?"
+                f"Подходит?\n\n"
+                f"{vote_status}"
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
@@ -926,6 +978,26 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     await friday_invite_job(context.application)
 
 
+def get_responses_text(responses: dict, members: dict) -> str:
+    """Generate a text summary of who voted what."""
+    if not responses:
+        return ""
+    
+    yes_votes = [members[uid]["name"] for uid, res in responses.items() if res == "yes" and uid in members]
+    no_votes = [members[uid]["name"] for uid, res in responses.items() if res == "no" and uid in members]
+    pending = [members[uid]["name"] for uid, res in responses.items() if res == "pending" and uid in members]
+    
+    lines = []
+    if yes_votes:
+        lines.append(f"✅ {', '.join(yes_votes)}")
+    if no_votes:
+        lines.append(f"❌ {', '.join(no_votes)}")
+    if pending:
+        lines.append(f"⏳ Ожидаем: {', '.join(pending)}")
+    
+    return "\n".join(lines)
+
+
 async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Friday invite button responses."""
     query = update.callback_query
@@ -951,22 +1023,24 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
 
-        # Edit message to remove buttons and confirm vote
-        original_text = query.message.text
+        # Edit message to update vote list, but keep buttons for others
+        original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0]
+        vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+        
         if sessions[chat_id]["event"]["status"] == "confirmed":
-            # Final confirmation for everyone - message from friday_invite_job usually says "Подходит?"
-            # But the Friday invite text might vary. Let's be safe.
-            new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>"
+            new_text = original_text.split("Подходит?")[0] + "✅ <b>Время подтверждено всеми!</b>\n\n" + vote_status
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Изменить", callback_data="fri_change")]
             ])
             await query.edit_message_text(text=new_text, parse_mode="HTML", reply_markup=keyboard)
         else:
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
+                [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+                [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
             ])
             await query.edit_message_text(
-                text=f"{original_text}\n\n✅ <b>Ваш голос: Подходит</b>",
+                text=f"{original_text}\n\n{vote_status}",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
@@ -977,30 +1051,35 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         save_sessions(sessions)
         await query.answer("❌ Записано.")
 
-        # Edit message to remove buttons and confirm vote
-        original_text = query.message.text
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Изменить выбор", callback_data="fri_change")]
-        ])
-        await query.edit_message_text(
-            text=f"{original_text}\n\n❌ <b>Ваш голос: Не смогу</b>",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-
-    elif query.data == "fri_change":
-        # Show original 3 buttons again to change vote
+        # Edit message to update vote list
+        original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0]
+        vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+        
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
             [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
             [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
         ])
         await query.edit_message_text(
-            text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0],  # Remove vote confirmation
+            text=f"{original_text}\n\n{vote_status}",
             parse_mode="HTML",
             reply_markup=keyboard
         )
-        await query.answer("Выберите новый вариант")
+
+    elif query.data == "fri_change":
+        # Just refresh the vote list if it was stuck
+        vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+            [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+            [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+        ])
+        await query.edit_message_text(
+            text=query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0] + f"\n\n{vote_status}",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await query.answer()
 
     elif query.data == "fri_propose":
         # Send time options in private chat
@@ -1177,6 +1256,7 @@ async def set_bot_commands(app):
         BotCommand("help", "Список команд"),
         BotCommand("time", "Обновить время созвона (администратор)"),
         BotCommand("poll", "Включить/отключить опросы"),
+        BotCommand("test_mode", "Включить/отключить тестовый режим (администратор)"),
         BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
@@ -1218,6 +1298,37 @@ async def post_init(app):
             replace_existing=True
         )
         logger.info("Normal mode: Friday job scheduled for Friday 12:00")
+
+    # Schedule Sunday reminder
+    if test_mode:
+        # In test mode, reminder 5 seconds before "call" (which is not really scheduled but let's say every 10 min)
+        # Actually, let's just schedule it every 10 minutes offset by 9 minutes from the invite
+        scheduler.add_job(
+            sunday_reminder_job,
+            "interval",
+            minutes=10,
+            args=[app],
+            id="sunday_reminder",
+            replace_existing=True
+        )
+    else:
+        # Normal mode: Sunday 16:55 (if call is 17:00)
+        # For simplicity, we hardcode 5 min before settings["call_time"]
+        try:
+            h, m = map(int, settings["call_time"].split(":"))
+            rem_h, rem_m = (h, m - 5) if m >= 5 else (h - 1, m + 55)
+            scheduler.add_job(
+                sunday_reminder_job,
+                "cron",
+                day_of_week=6,  # Sunday
+                hour=rem_h,
+                minute=rem_m,
+                args=[app],
+                id="sunday_reminder",
+                replace_existing=True
+            )
+        except:
+            logger.error("Failed to schedule Sunday reminder")
 
     # Schedule auto-confirm check every minute (or 5 seconds in test mode)
     check_interval = 5 if test_mode else 60
