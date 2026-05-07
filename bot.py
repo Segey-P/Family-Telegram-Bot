@@ -544,11 +544,18 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
             sessions[chat_id]["event"]["responses"] = responses
             
-            # Auto-accept if proposer is admin or if everyone (e.g. 1 person) already voted yes
+            # Auto-accept if proposer is admin or if all unique timezones are covered
             is_admin = sessions[chat_id]["members"].get(user_id, {}).get("is_admin", False)
             all_yes = all(r == "yes" for r in responses.values())
-            
-            if all_yes or is_admin:
+
+            # Get unique timezones of all members
+            members = sessions[chat_id]["members"]
+            group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
+            # Get timezones of those who said 'yes'
+            yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
+            all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
+
+            if all_yes or all_tz_covered or is_admin:
                 sessions[chat_id]["event"]["status"] = "confirmed"
                 status_text = "Принято"
             else:
@@ -632,9 +639,22 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
         if query.data.startswith("group_yes"):
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
             
-            # Check for immediate confirmation
+            # Check for immediate confirmation: 
+            # 1. All members voted 'yes' OR
+            # 2. At least one 'yes' from every unique timezone represented in the group
             responses = sessions[chat_id]["event"]["responses"]
-            if all(r == "yes" for r in responses.values()):
+            members = sessions[chat_id]["members"]
+            
+            all_yes = all(r == "yes" for r in responses.values())
+            
+            # Get unique timezones of all members
+            group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
+            # Get timezones of those who said 'yes'
+            yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
+            
+            all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
+
+            if all_yes or all_tz_covered:
                 sessions[chat_id]["event"]["status"] = "confirmed"
             
             save_sessions(sessions)
@@ -1015,9 +1035,22 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
             
-            # Check for immediate confirmation
+            # Check for immediate confirmation: 
+            # 1. All members voted 'yes' OR
+            # 2. At least one 'yes' from every unique timezone represented in the group
             responses = sessions[chat_id]["event"]["responses"]
-            if all(r == "yes" for r in responses.values()):
+            members = sessions[chat_id]["members"]
+            
+            all_yes = all(r == "yes" for r in responses.values())
+            
+            # Get unique timezones of all members
+            group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
+            # Get timezones of those who said 'yes'
+            yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
+            
+            all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
+
+            if all_yes or all_tz_covered:
                 sessions[chat_id]["event"]["status"] = "confirmed"
         
         save_sessions(sessions)
@@ -1177,9 +1210,15 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     sessions[group_chat_id]["event"]["responses"] = responses
 
     is_admin = sessions[group_chat_id]["members"].get(user_id, {}).get("is_admin", False)
+    
+    # Check for immediate confirmation: all members OR all unique timezones
     all_yes = all(r == "yes" for r in responses.values())
+    members = sessions[group_chat_id]["members"]
+    group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
+    yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
+    all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
 
-    if all_yes or is_admin:
+    if all_yes or all_tz_covered or is_admin:
         sessions[group_chat_id]["event"]["status"] = "confirmed"
         status_text = "Принято"
     else:
