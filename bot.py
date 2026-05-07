@@ -837,6 +837,66 @@ async def check_autoconfirm_job(app):
     save_sessions(sessions)
 
 
+async def call_presence_check_job(app):
+    """Scheduled job: 30 min before call (or 1 min in test mode). Check status and offer delay."""
+    logger.info("Call presence check job triggered")
+    sessions = load_sessions()
+    settings = load_settings()
+    base_tz = settings["base_timezone"]
+
+    for chat_id, session_data in sessions.items():
+        if int(chat_id) > 0: continue
+        event = session_data.get("event", {})
+        if event.get("status") != "confirmed": continue
+
+        # Cleanup poll message
+        if event.get("last_poll_id"):
+            try: await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
+            except: pass
+
+        call_time = event.get("current_time", settings["call_time"])
+        text = (
+            f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
+            f"🕒 Время: <code>{call_time} {base_tz}</code>\n"
+            f"Все готовы?"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Готов(а)", callback_data="pres_ready")],
+            [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
+            [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+        ])
+        msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+        event["last_poll_id"] = msg.message_id
+    save_sessions(sessions)
+
+async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle buttons from the 30-min reminder."""
+    query = update.callback_query
+    await query.answer()
+    sessions = load_sessions()
+    chat_id, user_id = str(query.message.chat_id), str(query.from_user.id)
+    user_name = query.from_user.first_name or "User"
+
+    if query.data == "pres_ready":
+        await query.answer("👍 Отлично!")
+        return
+
+    # Handle delays
+    delay_mins = 15 if "15" in query.data else 30
+    settings = load_settings()
+    current_time = sessions[chat_id]["event"].get("current_time", settings["call_time"])
+    
+    # Calculate new time
+    h, m = map(int, current_time.split(":"))
+    new_dt = datetime(2026, 1, 1, h, m) + timedelta(minutes=delay_mins)
+    new_time = new_dt.strftime("%H:%M")
+    
+    sessions[chat_id]["event"]["current_time"] = new_time
+    save_sessions(sessions)
+    
+    await query.message.reply_text(f"⏳ {user_name} задерживается. Новое время: <b>{new_time}</b>", parse_mode="HTML")
+
+
 async def sunday_reminder_job(app):
     """Scheduled job: Send Sunday reminder 5 minutes before the call."""
     logger.info("Sunday reminder job triggered")
@@ -855,6 +915,11 @@ async def sunday_reminder_job(app):
             logger.info(f"Skipping reminder for chat {chat_id}: status is {event.get('status')}")
             continue
 
+        # Cleanup previous poll/presence message
+        if event.get("last_poll_id"):
+            try: await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
+            except: pass
+
         call_time = event.get("current_time", settings["call_time"])
         responses = event.get("responses", {})
         vote_status = get_responses_text(responses, session_data["members"])
@@ -866,11 +931,13 @@ async def sunday_reminder_job(app):
         )
 
         try:
-            await app.bot.send_message(
+            msg = await app.bot.send_message(
                 chat_id=chat_id,
                 text=text,
                 parse_mode="HTML"
             )
+            event["last_poll_id"] = msg.message_id
+            save_sessions(sessions)
             logger.info(f"Sunday reminder sent to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send Sunday reminder to {chat_id}: {e}")
@@ -1391,6 +1458,35 @@ async def post_init(app):
         )
         logger.info("Normal mode: Friday job scheduled for Friday 12:00")
 
+    # Schedule Call Presence / Delay Check
+    if test_mode:
+        # Test mode: run every 10 min, offset by 7 min from invite
+        scheduler.add_job(
+            call_presence_check_job,
+            "interval",
+            minutes=10,
+            args=[app],
+            id="presence_check",
+            replace_existing=True
+        )
+    else:
+        # Normal mode: 30 min before call
+        try:
+            h, m = map(int, settings["call_time"].split(":"))
+            rem_h, rem_m = (h, m - 30) if m >= 30 else (h - 1, m + 30)
+            scheduler.add_job(
+                call_presence_check_job,
+                "cron",
+                day_of_week=6,
+                hour=rem_h,
+                minute=rem_m,
+                args=[app],
+                id="presence_check",
+                replace_existing=True
+            )
+        except:
+            logger.error("Failed to schedule presence check")
+
     # Schedule Sunday reminder
     if test_mode:
         # In test mode, reminder 5 seconds before "call" (which is not really scheduled but let's say every 10 min)
@@ -1460,6 +1556,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^time_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^group_"))
+    app.add_handler(CallbackQueryHandler(handle_presence_callback, pattern="^pres_"))
 
     # Free-text time input in private chat (e.g. "7:20", "7.20", "7 20")
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_time_text_input))
