@@ -861,7 +861,6 @@ async def call_presence_check_job(app):
             f"Все готовы?"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Готов(а)", callback_data="pres_ready")],
             [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
             [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
         ])
@@ -877,13 +876,10 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
     chat_id, user_id = str(query.message.chat_id), str(query.from_user.id)
     user_name = query.from_user.first_name or "User"
 
-    if query.data == "pres_ready":
-        await query.answer("👍 Отлично!")
-        return
-
     # Handle delays
     delay_mins = 15 if "15" in query.data else 30
     settings = load_settings()
+    base_tz = settings["base_timezone"]
     current_time = sessions[chat_id]["event"].get("current_time", settings["call_time"])
     
     # Calculate new time
@@ -894,7 +890,21 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
     sessions[chat_id]["event"]["current_time"] = new_time
     save_sessions(sessions)
     
-    await query.message.reply_text(f"⏳ {user_name} задерживается. Новое время: <b>{new_time}</b>", parse_mode="HTML")
+    # Update the message instead of replying
+    text = (
+        f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
+        f"⏳ {html.escape(user_name)} попросил задержаться на {delay_mins} мин.\n"
+        f"🕒 Новое время: <code>{new_time} {base_tz}</code>"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
+        [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+    ])
+    
+    try:
+        await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Failed to update presence message: {e}")
 
 
 async def sunday_reminder_job(app):
