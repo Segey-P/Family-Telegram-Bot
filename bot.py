@@ -890,11 +890,15 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
     sessions[chat_id]["event"]["current_time"] = new_time
     save_sessions(sessions)
     
+    # Generate timezone block for all members
+    tz_block = format_all_member_times(new_time, base_tz, sessions[chat_id]["members"])
+    
     # Update the message instead of replying
     text = (
         f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
         f"⏳ {html.escape(user_name)} попросил задержаться на {delay_mins} мин.\n"
-        f"🕒 Новое время: <code>{new_time} {base_tz}</code>"
+        f"🕒 Новое время: <code>{new_time} {base_tz}</code>\n\n"
+        f"{tz_block}"
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
