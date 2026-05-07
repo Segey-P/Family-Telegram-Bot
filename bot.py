@@ -563,10 +563,10 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
             sessions[chat_id]["event"]["responses"] = responses
             
-            # Auto-accept if proposer is admin or if all unique timezones are covered
-            is_admin = sessions[chat_id]["members"].get(user_id, {}).get("is_admin", False)
+            # Auto-accept ONLY if all unique timezones are covered
+            # (Admin proposals no longer auto-confirm immediately to allow group feedback)
             all_yes = all(r == "yes" for r in responses.values())
-
+            
             # Get unique timezones of all members
             members = sessions[chat_id]["members"]
             group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
@@ -574,7 +574,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
             all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
 
-            if all_yes or all_tz_covered or is_admin:
+            if all_yes or all_tz_covered:
                 sessions[chat_id]["event"]["status"] = "confirmed"
                 status_text = "Принято"
             else:
@@ -1356,13 +1356,14 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     is_admin = sessions[group_chat_id]["members"].get(user_id, {}).get("is_admin", False)
     
     # Check for immediate confirmation: all members OR all unique timezones
+    # (Admin proposals no longer auto-confirm immediately to allow group feedback)
     all_yes = all(r == "yes" for r in responses.values())
     members = sessions[group_chat_id]["members"]
     group_timezones = set(m.get("timezone") for m in members.values() if m.get("timezone"))
     yes_timezones = set(members[uid].get("timezone") for uid, res in responses.items() if res == "yes" and uid in members)
     all_tz_covered = group_timezones.issubset(yes_timezones) and len(group_timezones) > 0
 
-    if all_yes or all_tz_covered or is_admin:
+    if all_yes or all_tz_covered:
         sessions[group_chat_id]["event"]["status"] = "confirmed"
         status_text = "Принято"
     else:
