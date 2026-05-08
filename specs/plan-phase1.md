@@ -1,4 +1,6 @@
-# Phase 1 Implementation Plan
+# Phase 1 Implementation Plan ✅ COMPLETE
+
+> Historical planning doc. All milestones delivered. See `context-phase1-implementation.md` for current state and `TODO.md` for what's next.
 
 ## Overview
 Build MVP: single weekly call coordination. Bot joins group, collects timezones, sends Friday invite, manages proposals, auto-confirms by Sunday.
