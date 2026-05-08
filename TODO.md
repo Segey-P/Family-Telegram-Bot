@@ -5,6 +5,7 @@
   - Run 2–3 real weekly cycles: Friday invite → voting → Sunday reminder
   - Watch for edge cases: late joiners, concurrent votes, timezone edge cases
 
-## Priority 2 — Quality of life
+## Backlog
 - [ ] Transfer admin (`/makeadmin @username`)
-- [ ] Recurrence settings (weekly / bi-weekly / monthly)
+- [ ] 
+
