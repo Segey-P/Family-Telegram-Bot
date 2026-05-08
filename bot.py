@@ -294,6 +294,62 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+async def reschedule_jobs(app):
+    """Update all scheduled jobs based on current settings."""
+    if not hasattr(app, "scheduler"):
+        return
+
+    scheduler = app.scheduler
+    settings = load_settings()
+    test_mode = settings.get("test_mode", False)
+    
+    # 1. Friday/Saturday Invite
+    scheduler.remove_job("friday_invite")
+    if test_mode:
+        scheduler.add_job(friday_invite_job, "interval", minutes=10, args=[app], id="friday_invite")
+    else:
+        poll_day_str = settings.get("poll_day", "Friday")
+        poll_time_str = settings.get("poll_time", "12:00")
+        days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+        day_of_week = days.get(poll_day_str.lower(), 4)
+        hour, minute = map(int, poll_time_str.split(":"))
+        scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, args=[app], id="friday_invite")
+
+    # 2. Presence Check
+    if scheduler.get_job("presence_check"):
+        scheduler.remove_job("presence_check")
+    if test_mode:
+        scheduler.add_job(call_presence_check_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=7), args=[app], id="presence_check")
+    else:
+        try:
+            h, m = map(int, settings["call_time"].split(":"))
+            rem_h, rem_m = (h, m - 30) if m >= 30 else (h - 1, m + 30)
+            if rem_h < 0: rem_h += 24
+            scheduler.add_job(call_presence_check_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, args=[app], id="presence_check")
+        except: pass
+
+    # 3. Sunday Reminder
+    if scheduler.get_job("sunday_reminder"):
+        scheduler.remove_job("sunday_reminder")
+    if test_mode:
+        scheduler.add_job(sunday_reminder_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=9), args=[app], id="sunday_reminder")
+    else:
+        try:
+            h, m = map(int, settings["call_time"].split(":"))
+            rem_h, rem_m = (h, m - 5) if m >= 5 else (h - 1, m + 55)
+            if rem_h < 0: rem_h += 24
+            scheduler.add_job(sunday_reminder_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, args=[app], id="sunday_reminder")
+        except: pass
+
+    # 4. Auto-confirm Check
+    if scheduler.get_job("autoconfirm_check"):
+        scheduler.remove_job("autoconfirm_check")
+    check_interval = 5 if test_mode else 60
+    scheduler.add_job(check_autoconfirm_job, "interval", seconds=check_interval, args=[app], id="autoconfirm_check")
+    
+    logger.info("Scheduler updated with new settings")
+
+
 async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /time command (admin only)."""
     sessions = load_sessions()
@@ -340,6 +396,7 @@ async def handle_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
 
+    await reschedule_jobs(context.application)
     await update.message.reply_text(f"✅ Время обновлено: {time_str} {tz_name}")
 
 
@@ -377,6 +434,8 @@ async def handle_poll_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
+    
+    await reschedule_jobs(context.application)
 
 
 def resolve_timezone(tz_input: str) -> Tuple[Optional[str], str]:
@@ -557,13 +616,14 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
             sessions[chat_id]["event"]["responses"] = responses
             
-        # Proposer auto-votes 'yes'
-        responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[chat_id]["members"].keys()}
-        sessions[chat_id]["event"]["responses"] = responses
-        
-        # Keep status as 'proposed', do not auto-confirm
-        sessions[chat_id]["event"]["status"] = "proposed"
-        status_text = "Ожидаем голоса"
+            # Check for immediate confirmation (e.g. if it's a 1-person group during testing)
+            all_yes = all(r == "yes" for r in responses.values())
+            if all_yes:
+                sessions[chat_id]["event"]["status"] = "confirmed"
+                status_text = "Принято (все подтвердили)"
+            else:
+                sessions[chat_id]["event"]["status"] = "proposed"
+                status_text = "Ожидаем голоса"
         
         # In test mode, use 1 minute; otherwise 12 hours
         deadline_delta = timedelta(minutes=1) if load_settings().get("test_mode") else timedelta(hours=12)
@@ -645,6 +705,12 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
         ensure_member(chat_id, user_id, query.from_user.first_name or "User", sessions)
         if query.data.startswith("group_yes"):
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
+            
+            # Check for full confirmation
+            all_yes = all(r == "yes" for r in sessions[chat_id]["event"]["responses"].values())
+            if all_yes:
+                sessions[chat_id]["event"]["status"] = "confirmed"
+
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
 
@@ -652,33 +718,54 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
             vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
             
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
-                [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
-                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
-            ])
+            if sessions[chat_id]["event"]["status"] == "confirmed":
+                confirmed_time = sessions[chat_id]["event"]["current_time"]
+                settings = load_settings()
+                base_tz = settings["base_timezone"]
+                tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
+                
+                text = (
+                    f"✅ <b>Время подтверждено!</b>\n\n"
+                    f"{tz_block}\n\n"
+                    f"{vote_status}"
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+                ])
+            else:
+                text = f"{original_text}\n\n{vote_status}"
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                    [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+                ])
+
             await query.edit_message_text(
-                text=f"{original_text}\n\n{vote_status}",
+                text=text,
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
 
         elif query.data.startswith("group_no"):
             sessions[chat_id]["event"]["responses"][user_id] = "no"
+            sessions[chat_id]["event"]["status"] = "idle"  # Reject proposal immediately
             save_sessions(sessions)
-            await query.answer("❌ Записано.")
+            await query.answer("❌ Записано. Предложение отклонено.")
 
-            # Edit message to update vote list
+            # Edit message to update vote list and remove buttons
             original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
             vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
             
+            text = (
+                f"❌ <b>Предложение отклонено</b>\n\n"
+                f"{original_text}\n\n"
+                f"{vote_status}"
+            )
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
-                [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
-                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")]
             ])
             await query.edit_message_text(
-                text=f"{original_text}\n\n{vote_status}",
+                text=text,
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
@@ -950,12 +1037,13 @@ async def friday_invite_job(app):
 
         try:
             # Reset event state
+            deadline_delta = timedelta(minutes=1) if settings.get("test_mode") else timedelta(hours=12)
             session_data["event"] = {
-                "status": "idle",
+                "status": "proposed",
                 "proposal_id": None,
                 "current_time": base_time,
                 "proposal_author": None,
-                "deadline": None,
+                "deadline": (datetime.now(timezone.utc) + deadline_delta).isoformat(),
                 "responses": {uid: "pending" for uid in session_data["members"].keys()},
                 "last_poll_id": session_data["event"].get("last_poll_id") if "event" in session_data else None
             }
@@ -991,9 +1079,9 @@ async def friday_invite_job(app):
             )
             session_data["event"]["last_poll_id"] = msg.message_id
             save_sessions(sessions)
-            logger.info(f"Friday invite sent to chat {chat_id}")
+            logger.info(f"Weekly invite sent to chat {chat_id}")
         except Exception as e:
-            logger.error(f"Failed to send Friday invite to {chat_id}: {e}")
+            logger.error(f"Failed to send weekly invite to {chat_id}: {e}")
 
     save_sessions(sessions)
 
@@ -1038,33 +1126,7 @@ async def handle_test_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
 
-    # Restart scheduler with new settings
-    if hasattr(context.application, "scheduler"):
-        scheduler = context.application.scheduler
-        scheduler.remove_job("friday_invite")
-
-        if settings.get("test_mode"):
-            scheduler.add_job(
-                friday_invite_job,
-                "interval",
-                minutes=10,
-                args=[context.application],
-                id="friday_invite",
-                replace_existing=True
-            )
-            logger.info("Test mode: Friday job now runs every 10 minutes")
-        else:
-            scheduler.add_job(
-                friday_invite_job,
-                "cron",
-                day_of_week=4,
-                hour=12,
-                minute=0,
-                args=[context.application],
-                id="friday_invite",
-                replace_existing=True
-            )
-            logger.info("Normal mode: Friday job restored to Friday 12:00")
+    await reschedule_jobs(context.application)
 
 
 async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1129,21 +1191,43 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     if query.data == "fri_yes":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
-        
+            
+            # Check for full confirmation
+            all_yes = all(r == "yes" for r in sessions[chat_id]["event"]["responses"].values())
+            if all_yes:
+                sessions[chat_id]["event"]["status"] = "confirmed"
+
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
 
-        # Edit message to update vote list, but keep buttons for others
+        # Edit message to update vote list
         original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
         vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
-            [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
-            [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
-        ])
+        if sessions[chat_id]["event"]["status"] == "confirmed":
+            confirmed_time = sessions[chat_id]["event"]["current_time"]
+            settings = load_settings()
+            base_tz = settings["base_timezone"]
+            tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
+            
+            text = (
+                f"✅ <b>Время подтверждено!</b>\n\n"
+                f"{tz_block}\n\n"
+                f"{vote_status}"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Изменить", callback_data="fri_propose")]
+            ])
+        else:
+            text = f"{original_text}\n\n{vote_status}"
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+                [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+            ])
+
         await query.edit_message_text(
-            text=f"{original_text}\n\n{vote_status}",
+            text=text,
             parse_mode="HTML",
             reply_markup=keyboard
         )
@@ -1151,20 +1235,24 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "fri_no":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "no"
+            sessions[chat_id]["event"]["status"] = "idle"  # Reject proposal immediately
         save_sessions(sessions)
-        await query.answer("❌ Записано.")
+        await query.answer("❌ Записано. Опрос отклонен.")
 
-        # Edit message to update vote list
+        # Edit message to update vote list and remove buttons
         original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
         vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
         
+        text = (
+            f"❌ <b>Опрос отклонен</b>\n\n"
+            f"{original_text}\n\n"
+            f"{vote_status}"
+        )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
-            [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
-            [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+            [InlineKeyboardButton("🔄 Предложить новое время", callback_data="fri_propose")]
         ])
         await query.edit_message_text(
-            text=f"{original_text}\n\n{vote_status}",
+            text=text,
             parse_mode="HTML",
             reply_markup=keyboard
         )
@@ -1276,14 +1364,12 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     responses = {uid: ("yes" if uid == user_id else "pending") for uid in sessions[group_chat_id]["members"].keys()}
     sessions[group_chat_id]["event"]["responses"] = responses
 
-    is_admin = sessions[group_chat_id]["members"].get(user_id, {}).get("is_admin", False)
-    
-    # Check for immediate confirmation: at least one 'yes'
-    has_yes = any(r == "yes" for r in responses.values())
+    # Check for immediate confirmation: all members voted 'yes'
+    all_yes = all(r == "yes" for r in responses.values())
 
-    if has_yes or is_admin:
+    if all_yes:
         sessions[group_chat_id]["event"]["status"] = "confirmed"
-        status_text = "Принято"
+        status_text = "Принято (все подтвердили)"
     else:
         sessions[group_chat_id]["event"]["status"] = "proposed"
         status_text = "Уведомил всех"
@@ -1392,18 +1478,26 @@ async def post_init(app):
         )
         logger.info("TEST MODE: Friday job runs every 10 minutes")
     else:
-        # Normal mode: Friday at 12:00
+        # Normal mode: Scheduled from settings
+        poll_day_str = settings.get("poll_day", "Friday")
+        poll_time_str = settings.get("poll_time", "12:00")
+        
+        # Map day name to 0-6 (Mon-Sun)
+        days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+        day_of_week = days.get(poll_day_str.lower(), 4)
+        hour, minute = map(int, poll_time_str.split(":"))
+
         scheduler.add_job(
             friday_invite_job,
             "cron",
-            day_of_week=4,  # Friday (0=Mon, 4=Fri)
-            hour=12,
-            minute=0,
+            day_of_week=day_of_week,
+            hour=hour,
+            minute=minute,
             args=[app],
             id="friday_invite",
             replace_existing=True
         )
-        logger.info("Normal mode: Friday job scheduled for Friday 12:00")
+        logger.info(f"Normal mode: Friday job scheduled for {poll_day_str} {poll_time_str}")
 
     # Schedule Call Presence / Delay Check
     if test_mode:
