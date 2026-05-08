@@ -1,4 +1,3 @@
-import asyncio
 import html
 import json
 import logging
@@ -33,6 +32,7 @@ SETTINGS_FILE = Path("settings.json")
 SESSIONS_FILE = Path("sessions.json")
 USER_TIMEZONES_FILE = Path("user_timezones.json")
 PENDING_PROPOSALS_FILE = Path("pending_proposals.json")
+DEFAULT_TIMEZONE = "Europe/Minsk"
 
 
 def load_settings() -> dict:
@@ -420,9 +420,6 @@ def generate_time_options(base_time_str: str) -> List[str]:
     return options
 
 
-DEFAULT_TIMEZONE = "Europe/Minsk"
-
-
 def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
     """Convert time_str (HH:MM) from from_tz to to_tz and return HH:MM."""
     try:
@@ -470,24 +467,23 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     sessions = load_sessions()
-    chat_id = str(query.message.chat_id)
     user_id = str(query.from_user.id)
 
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+    # Callback data: "private_change_time_{group_chat_id}"
+    parts = query.data.split("_", 3)
+    group_chat_id = parts[3] if len(parts) > 3 else None
+
+    if not group_chat_id or group_chat_id not in sessions or user_id not in sessions[group_chat_id]["members"]:
         await query.edit_message_text("❌ Сессия истекла. Попросите администратора отправить новый опрос.")
         return
 
-    user_tz = sessions[chat_id]["members"][user_id]["timezone"]
-    if not user_tz:
-        await query.answer("⚠️ Установите вашу временную зону: /tz", alert=True)
-        return
+    user_tz = sessions[group_chat_id]["members"][user_id]["timezone"] or DEFAULT_TIMEZONE
 
     settings = load_settings()
     base_time = settings["call_time"]
     base_tz_name = settings["base_timezone"]
 
-    # Get the current selected time to show in the message
-    current_time = sessions[chat_id]["event"].get("current_time", base_time)
+    current_time = sessions[group_chat_id]["event"].get("current_time", base_time)
     current_local_time = format_time_in_tz(current_time, base_tz_name, user_tz)
 
     options = generate_time_options(base_time)
@@ -497,16 +493,14 @@ async def handle_private_change_time(update: Update, context: ContextTypes.DEFAU
         tz_options.append((opt, local_time))
 
     text = (
-        f"<b>✅ Текущее время:</b> {current_local_time} {user_tz}\n"
-        f"<i>({current_time} {base_tz_name})</i>\n\n"
-        f"<b>Выберите другое:</b>\n\n"
-        f"<code>{base_time} {base_tz_name}</code>\n"
-        f"<code>{user_tz}</code>\n\n"
+        f"<b>Текущее время:</b> {current_local_time} ({user_tz})\n\n"
+        f"<b>Выберите время или напишите своё</b> (в вашем часовом поясе):\n"
+        f"<i>Примеры: 7:20 · 7.20 · 7 20 · 19:30</i>\n\n"
     )
     keyboard_buttons = []
     for base_opt, local_opt in tz_options:
         button_label = f"🕐 {local_opt}"
-        button_data = f"time_{base_opt.replace(':', '')}"
+        button_data = f"time_{base_opt.replace(':', '')}_{group_chat_id}"
         keyboard_buttons.append([InlineKeyboardButton(button_label, callback_data=button_data)])
 
     keyboard = InlineKeyboardMarkup(keyboard_buttons)
@@ -586,13 +580,12 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
         local_time = format_time_in_tz(selected_time, base_tz, user_tz)
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Изменить время", callback_data="private_change_time")]
+            [InlineKeyboardButton("🔄 Изменить время", callback_data=f"private_change_time_{chat_id}")]
         ])
         await query.edit_message_text(
             text=(
                 f"✅ Принято 👍\n\n"
-                f"➡️ <b>{local_time}</b> {user_tz}\n"
-                f"<i>({selected_time} {base_tz})</i>\n\n"
+                f"➡️ <b>{local_time}</b> ({user_tz})\n\n"
                 f"{status_text}"
             ),
             parse_mode="HTML",
@@ -612,8 +605,6 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if sessions[chat_id]["event"]["status"] == "confirmed":
                     group_text = (
                         f"✅ {html.escape(author_name)} установил новое время:\n\n"
-                        f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
-                        f"<i>({selected_time} {base_tz})</i>\n\n"
                         f"{tz_block}"
                     )
                     keyboard = InlineKeyboardMarkup([
@@ -622,8 +613,6 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else:
                     group_text = (
                         f"{html.escape(author_name)} предлагает новое время:\n\n"
-                        f"➡️ <code>{proposer_local} {proposer_tz}</code>\n"
-                        f"<i>({selected_time} {base_tz})</i>\n\n"
                         f"{tz_block}\n\n"
                         f"Подходит?"
                     )
@@ -1208,12 +1197,9 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             local_time = format_time_in_tz(opt, base_tz_name, user_tz)
             tz_options.append((opt, local_time))
 
-        # Show current base time and its conversion to user's timezone
         current_local = format_time_in_tz(base_time, base_tz_name, user_tz)
         text = (
-            f"<b>Текущее время:</b>\n"
-            f"<code>{base_time} {base_tz_name}</code>\n"
-            f"<code>{current_local} {user_tz}</code>\n\n"
+            f"<b>Текущее время:</b> {current_local} ({user_tz})\n\n"
             f"<b>Выберите время или напишите своё</b> (в вашем часовом поясе):\n"
             f"<i>Примеры: 7:20 · 7.20 · 7 20 · 19:30</i>\n\n"
         )
@@ -1314,12 +1300,11 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     # Private feedback
     local_time = format_time_in_tz(base_time_str, base_tz_name, user_tz_name)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Изменить время", callback_data="private_change_time")]
+        [InlineKeyboardButton("🔄 Изменить время", callback_data=f"private_change_time_{group_chat_id}")]
     ])
     await update.message.reply_text(
         f"✅ Принято 👍\n\n"
-        f"➡️ <b>{local_time}</b> {user_tz_name}\n"
-        f"<i>({base_time_str} {base_tz_name})</i>\n\n"
+        f"➡️ <b>{local_time}</b> ({user_tz_name})\n\n"
         f"{status_text}",
         parse_mode="HTML",
         reply_markup=keyboard
@@ -1332,7 +1317,6 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     if sessions[group_chat_id]["event"]["status"] == "confirmed":
         group_text = (
             f"✅ {html.escape(author_name)} установил новое время:\n\n"
-            f"➡️ <code>{local_time} {user_tz_name}</code>\n\n"
             f"{tz_block}"
         )
         group_keyboard = InlineKeyboardMarkup([
@@ -1341,7 +1325,6 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     else:
         group_text = (
             f"{html.escape(author_name)} предлагает новое время:\n\n"
-            f"➡️ <code>{local_time} {user_tz_name}</code>\n\n"
             f"{tz_block}\n\n"
             f"Подходит?"
         )
@@ -1517,7 +1500,7 @@ def main():
     app.add_handler(CommandHandler("debug_invite", handle_debug_invite))  # /debug_invite (was /отправить_опрос)
 
     # Callback handlers
-    app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time$"))
+    app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time_"))
     app.add_handler(CallbackQueryHandler(handle_friday_response, pattern="^fri_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^time_"))
     app.add_handler(CallbackQueryHandler(handle_proposal_yes, pattern="^group_"))
