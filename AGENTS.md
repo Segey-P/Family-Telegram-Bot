@@ -53,4 +53,23 @@ Mirrors `CLAUDE.md` for non-Claude agents.
 2. If output quality degrades, escalate to next tier.
 3. Log model switches in commit messages: `[model: Gemini 3 Flash]`
 
+---
+
+## Execution Protocol (All Agents)
+
+For every multi-file or multi-step task:
+
+1. **Plan first** — identify dependencies. Group by independent units.
+2. **Estimate** — give time + model choice upfront before starting.
+3. **Parallelize** — run independent tasks concurrently. Different models if justified.
+4. **Sequential only** — when outputs feed into next steps.
+
+| Phase | Parallel? | Model |
+|---|---|---|
+| Read + analyze | Sequential (once) | Qwen3 Coder (Free) |
+| Write / edit files | Parallel (no dependencies) | Qwen3 or Gemini 3 Flash |
+| Git operations | Parallel (repos are independent) | Qwen3 Coder (Free) |
+
+**Rule:** Never batch unrelated work sequentially just because it's the same tool. Parallelize whenever safe.
+
 Full definitions: `/Users/sergeypochikovskiy/AI_workspace/AGENTS.md`
