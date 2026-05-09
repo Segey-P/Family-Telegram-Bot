@@ -18,27 +18,27 @@ Mirrors `CLAUDE.md` for non-Claude agents.
 
 ---
 
-## Specialized Agents (15 Available)
+## Specialized Agents (15 Active)
 
 | # | Agent | Purpose | Default Model |
 |---|---|---|---|
-| 1 | Code Simplifier | Code quality, reuse, efficiency | Qwen3 Coder (Free) |
-| 2 | Security Reviewer | Vulnerabilities, CVE, OWASP Top 10 | Qwen3 Coder (Free) |
-| 3 | Tech Lead / Solution Architect | Architecture trade-offs, scalability | Qwen3 Coder (Free) |
+| 1 | Code Refiner | Code quality, refactoring, cleanup | Qwen3 Coder (Free) |
+| 2 | Security & Compliance Officer | Vulnerabilities, PIPEDA, OWASP, banking | Liquid LFM 2.5 Thinking |
+| 3 | Tech Lead / Solution Architect | Architecture trade-offs, scalability | Gemini 3 Flash |
 | 4 | UX Reviewer | UI/UX, accessibility, mobile | Qwen3 Coder (Free) |
-| 5 | Agent Coach | Meta-optimization of agent instructions | Nemotron 3 Super |
+| 5 | Agent Coach | Meta-optimization of agent instructions | Gemini 3 Flash |
 | 6 | Product Manager | Feature utility, MVP scope, prioritization | Gemini 3 Flash |
 | 7 | Models Manager | Dynamic model routing and cost audits | Qwen3 Coder (Free) |
-| 8 | Compliance & SecOps | PIPEDA, Bill C-27, banking standards | Liquid LFM 2.5 Thinking |
-| 9 | Database Architect | Schema, migrations, ACID, indexing | DeepSeek-V4 Flash |
-| 10 | Refactor & Code Cleanup | Dead code, DRY, over-engineering | Qwen3 Coder (Free) |
-| 11 | Documentation Writer | README, inline docs, API docs | Qwen3 Coder (Free) |
-| 12 | Testing Specialist | Unit/integration tests, edge cases | Qwen3 Coder (Free) |
-| 13 | DevOps & Release Engineer | CI/CD, GitHub Actions, Streamlit Cloud | Qwen3 Coder (Free) |
-| 14 | Performance Optimizer | Streamlit, DB, API bottlenecks | Qwen3 Coder (Free) |
-| 15 | API Design Reviewer | Endpoints, contracts, REST patterns | Qwen3 Coder (Free) |
+| 8 | Database Architect | Schema, migrations, ACID, indexing | DeepSeek-V4 Flash |
+| 9 | Documentation Writer | README, inline docs, API docs | Qwen3 Coder (Free) |
+| 10 | Testing Specialist | Unit/integration tests, edge cases | Qwen3 Coder (Free) |
+| 11 | DevOps & Release Engineer | CI/CD, GitHub Actions, Streamlit Cloud, Vercel | Qwen3 Coder (Free) |
+| 12 | Performance Optimizer | Streamlit/React/DB/API bottlenecks | Qwen3 Coder (Free) |
+| 13 | API Design Reviewer | Endpoints, contracts, REST patterns | Qwen3 Coder (Free) |
+| 14 | GitHub Ops | PRs, issues, branches, repo scaffolding | Qwen3 Coder (Free) |
+| 15 | Streamlit Pro | Dashboard architecture, caching, Streamlit-specific | Qwen3 Coder (Free) |
 
-## Model Switching
+## Model Pool
 
 | Model | Best For | Limitations |
 |---|---|---|
@@ -52,3 +52,5 @@ Mirrors `CLAUDE.md` for non-Claude agents.
 1. Start with cheapest capable model unless context is large (>50k tokens) or task is reasoning-heavy.
 2. If output quality degrades, escalate to next tier.
 3. Log model switches in commit messages: `[model: Gemini 3 Flash]`
+
+Full definitions: `/Users/sergeypochikovskiy/AI_workspace/AGENTS.md`
