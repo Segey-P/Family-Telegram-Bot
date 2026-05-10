@@ -335,20 +335,9 @@ async def reschedule_jobs(app):
             scheduler.add_job(call_presence_check_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, tz=base_tz, args=[app], id="presence_check")
         except: pass
 
-    # 3. Sunday Reminder
+    # 3. Sunday Reminder (disabled - 30-min presence check is enough)
     if scheduler.get_job("sunday_reminder"):
         scheduler.remove_job("sunday_reminder")
-    if test_mode:
-        scheduler.add_job(sunday_reminder_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=9), args=[app], id="sunday_reminder")
-    else:
-        try:
-            base_tz_name = settings.get("base_timezone", "Europe/Minsk")
-            base_tz = pytz.timezone(base_tz_name)
-            h, m = map(int, settings["call_time"].split(":"))
-            rem_h, rem_m = (h, m - 5) if m >= 5 else (h - 1, m + 55)
-            if rem_h < 0: rem_h += 24
-            scheduler.add_job(sunday_reminder_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, tz=base_tz, args=[app], id="sunday_reminder")
-        except: pass
 
     # 4. Auto-confirm Check
     if scheduler.get_job("autoconfirm_check"):
