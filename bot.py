@@ -1215,14 +1215,20 @@ async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
 
     sessions = load_sessions()
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        logger.info(f"Debug confirm: chat {chat_id} not in sessions")
         return
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
+        logger.info(f"Debug confirm: user {user_id} not admin")
         return
 
     event = sessions[chat_id].get("event", {})
-    if event.get("status") != "proposed":
+    current_status = event.get("status", "none")
+    logger.info(f"Debug confirm: current status = {current_status}, last_poll_id = {event.get('last_poll_id')}")
+
+    if current_status != "proposed":
+        logger.info(f"Debug confirm: skipping, status is {current_status}")
         return
 
     settings = load_settings()
@@ -1251,6 +1257,7 @@ async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode="HTML",
             reply_markup=keyboard
         )
+        logger.info(f"Debug confirm: poll updated for chat {chat_id}")
 
 
 async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
