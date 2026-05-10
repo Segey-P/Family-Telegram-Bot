@@ -1226,7 +1226,6 @@ async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     await check_autoconfirm_job(context.application)
-    await update.message.reply_text("✅ Auto-confirm job выполнен!")
 
 
 async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1245,7 +1244,6 @@ async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     await call_presence_check_job(context.application)
-    await update.message.reply_text("✅ Presence check job выполнен!")
 
 
 def get_responses_text(responses: dict, members: dict) -> str:
