@@ -1193,21 +1193,19 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Manually trigger Sunday reminder (testing only)."""
+    """Debug command: Trigger 30-min presence check (delete poll, send reminder with buttons)."""
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
     sessions = load_sessions()
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Бот не инициализирован в этом чате. Сначала отправьте любое сообщение боту.")
         return
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
         return
 
-    await sunday_reminder_job(context.application)
+    await call_presence_check_job(context.application)
 
 
 async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
