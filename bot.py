@@ -1138,28 +1138,60 @@ async def handle_test_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Manually trigger Friday invite (testing only)."""
+    """Debug command: Send poll to current chat only (like production)."""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
-    user_tz = get_user_timezone(user_id)
-    if not user_tz:
-        await update.message.reply_text("❌ Сначала установите вашу временную зону: `/tz America/Vancouver`", parse_mode="Markdown")
+    if int(chat_id) > 0:
+        await update.message.reply_text("❌ Работает только в группах.")
         return
 
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        sessions = Session.init_chat(chat_id, sessions)
-        sessions = Session.add_member(chat_id, user_id, update.message.from_user.first_name or "User", sessions)
-        sessions[chat_id]["members"][user_id]["timezone"] = user_tz
-        save_sessions(sessions)
+        await update.message.reply_text("❌ Бот не инициализирован в этой группе.")
+        return
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать. (первый пользователь в группе автоматически администратор)")
+        await update.message.reply_text("❌ Только администратор.")
         return
 
-    await friday_invite_job(context.application)
+    settings = load_settings()
+    session_data = sessions[chat_id]
+    base_time = settings.get("call_time", "17:00")
+    base_tz = settings.get("base_timezone", "Europe/Minsk")
+
+    deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
+    session_data["event"] = {
+        "status": "proposed",
+        "proposal_id": None,
+        "current_time": base_time,
+        "proposal_author": None,
+        "deadline": (datetime.now(timezone.utc) + deadline_delta).isoformat(),
+        "responses": {uid: "pending" for uid in session_data["members"].keys()},
+    }
+    save_sessions(sessions)
+
+    tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
+    vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
+
+    text = (
+        f"Созвон в воскресенье:\n\n"
+        f"{tz_block}\n\n"
+        f"Подходит?\n\n"
+        f"{vote_status}"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+        [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+        [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
+    ])
+
+    msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+    session_data["event"]["last_poll_id"] = msg.message_id
+    save_sessions(sessions)
+
+    await update.message.reply_text("✅ Опрос отправлен!")
 
 
 async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
