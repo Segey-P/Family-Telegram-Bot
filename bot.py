@@ -283,7 +283,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<code>/test_mode off</code> — отключить тестовый режим\n"
             "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n"
             "<code>/debug_reminder</code> — отправить воскресное напоминание (тестирование)\n"
-            "<code>/debug_confirm</code> — подтвердить событие вручную (тестирование)\n"
+            "<code>/debug_confirm</code> — запустить auto-confirm (тестирование)\n"
         )
 
     text += (
@@ -1180,7 +1180,7 @@ async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Manually confirm the current event (testing only)."""
+    """Debug command: Manually run auto-confirm job (same as production after deadline)."""
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
@@ -1194,13 +1194,8 @@ async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Только администратор может это делать.")
         return
 
-    event = sessions[chat_id].get("event", {})
-    current_status = event.get("status", "none")
-
-    event["status"] = "confirmed"
-    save_sessions(sessions)
-
-    await update.message.reply_text(f"✅ Событие подтверждено! (было: {current_status})")
+    await check_autoconfirm_job(context.application)
+    await update.message.reply_text("✅ Auto-confirm job выполнен!")
 
 
 def get_responses_text(responses: dict, members: dict) -> str:
@@ -1499,7 +1494,7 @@ async def set_bot_commands(app):
         BotCommand("test_mode", "Включить/отключить тестовый режим (администратор)"),
         BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
         BotCommand("debug_reminder", "Отправить воскресное напоминание (администратор, тестирование)"),
-        BotCommand("debug_confirm", "Подтвердить событие вручную (администратор, тестирование)"),
+        BotCommand("debug_confirm", "Запустить auto-confirm (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
 
