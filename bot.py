@@ -956,13 +956,9 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
         f"🕒 Новое время: <code>{new_time} {base_tz}</code>\n\n"
         f"{tz_block}"
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
-        [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
-    ])
     
     try:
-        await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
+        await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=None)
     except Exception as e:
         logger.error(f"Failed to update presence message: {e}")
 
