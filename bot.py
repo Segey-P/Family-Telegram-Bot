@@ -1191,8 +1191,6 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     session_data["event"]["last_poll_id"] = msg.message_id
     save_sessions(sessions)
 
-    await update.message.reply_text("✅ Опрос отправлен!")
-
 
 async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Debug command: Manually trigger Sunday reminder (testing only)."""
