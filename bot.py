@@ -1211,21 +1211,48 @@ async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Manually run auto-confirm job (same as production after deadline)."""
+    """Debug command: Force confirm current chat (bypass deadline like production)."""
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
 
     sessions = load_sessions()
     if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Бот не инициализирован в этом чате.")
         return
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
         return
 
-    await check_autoconfirm_job(context.application)
+    event = sessions[chat_id].get("event", {})
+    if event.get("status") != "proposed":
+        return
+
+    settings = load_settings()
+    base_tz = settings["base_timezone"]
+    confirmed_time = event.get("current_time", settings["call_time"])
+
+    event["status"] = "confirmed"
+    save_sessions(sessions)
+
+    if event.get("last_poll_id"):
+        vote_status = get_responses_text(event.get("responses", {}), sessions[chat_id]["members"])
+        tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
+        text = (
+            f"✅ <b>Время автоматически подтверждено!</b>\n\n"
+            f"🕒 <code>{confirmed_time} {base_tz}</code>\n\n"
+            f"{tz_block}\n\n"
+            f"{vote_status}"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
+        ])
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=event["last_poll_id"],
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
 
 
 async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
