@@ -1003,12 +1003,17 @@ async def sunday_reminder_job(app):
             f"🕒 Время: <code>{call_time} {base_tz}</code>\n\n"
             f"<b>Кто будет:</b>\n{vote_status or 'Все подтвердили!'}"
         )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
+            [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+        ])
 
         try:
             msg = await app.bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=keyboard
             )
             event["last_poll_id"] = msg.message_id
             save_sessions(sessions)
