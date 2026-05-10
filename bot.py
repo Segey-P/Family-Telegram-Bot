@@ -313,10 +313,12 @@ async def reschedule_jobs(app):
     else:
         poll_day_str = settings.get("poll_day", "Friday")
         poll_time_str = settings.get("poll_time", "12:00")
+        base_tz_name = settings.get("base_timezone", "Europe/Minsk")
+        base_tz = pytz.timezone(base_tz_name)
         days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
         day_of_week = days.get(poll_day_str.lower(), 4)
         hour, minute = map(int, poll_time_str.split(":"))
-        scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, args=[app], id="friday_invite")
+        scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, tz=base_tz, args=[app], id="friday_invite")
 
     # 2. Presence Check
     if scheduler.get_job("presence_check"):
@@ -325,10 +327,12 @@ async def reschedule_jobs(app):
         scheduler.add_job(call_presence_check_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=7), args=[app], id="presence_check")
     else:
         try:
+            base_tz_name = settings.get("base_timezone", "Europe/Minsk")
+            base_tz = pytz.timezone(base_tz_name)
             h, m = map(int, settings["call_time"].split(":"))
             rem_h, rem_m = (h, m - 30) if m >= 30 else (h - 1, m + 30)
             if rem_h < 0: rem_h += 24
-            scheduler.add_job(call_presence_check_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, args=[app], id="presence_check")
+            scheduler.add_job(call_presence_check_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, tz=base_tz, args=[app], id="presence_check")
         except: pass
 
     # 3. Sunday Reminder
@@ -338,10 +342,12 @@ async def reschedule_jobs(app):
         scheduler.add_job(sunday_reminder_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=9), args=[app], id="sunday_reminder")
     else:
         try:
+            base_tz_name = settings.get("base_timezone", "Europe/Minsk")
+            base_tz = pytz.timezone(base_tz_name)
             h, m = map(int, settings["call_time"].split(":"))
             rem_h, rem_m = (h, m - 5) if m >= 5 else (h - 1, m + 55)
             if rem_h < 0: rem_h += 24
-            scheduler.add_job(sunday_reminder_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, args=[app], id="sunday_reminder")
+            scheduler.add_job(sunday_reminder_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, tz=base_tz, args=[app], id="sunday_reminder")
         except: pass
 
     # 4. Auto-confirm Check
