@@ -284,6 +284,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n"
             "<code>/debug_reminder</code> — отправить воскресное напоминание (тестирование)\n"
             "<code>/debug_confirm</code> — запустить auto-confirm (тестирование)\n"
+            "<code>/debug_presence</code> — запустить presence check (тестирование)\n"
         )
 
     text += (
@@ -1198,6 +1199,25 @@ async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("✅ Auto-confirm job выполнен!")
 
 
+async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: Manually trigger 30-min presence check (same as production)."""
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    sessions = load_sessions()
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await update.message.reply_text("❌ Бот не инициализирован в этом чате.")
+        return
+
+    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+    if not is_admin:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    await call_presence_check_job(context.application)
+    await update.message.reply_text("✅ Presence check job выполнен!")
+
+
 def get_responses_text(responses: dict, members: dict) -> str:
     """Generate a text summary of who voted what."""
     if not responses:
@@ -1495,6 +1515,7 @@ async def set_bot_commands(app):
         BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
         BotCommand("debug_reminder", "Отправить воскресное напоминание (администратор, тестирование)"),
         BotCommand("debug_confirm", "Запустить auto-confirm (администратор, тестирование)"),
+        BotCommand("debug_presence", "Запустить presence check (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -1638,6 +1659,7 @@ def main():
     app.add_handler(CommandHandler("debug_invite", handle_debug_invite))
     app.add_handler(CommandHandler("debug_reminder", handle_debug_reminder))
     app.add_handler(CommandHandler("debug_confirm", handle_debug_confirm))
+    app.add_handler(CommandHandler("debug_presence", handle_debug_presence))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time_"))
