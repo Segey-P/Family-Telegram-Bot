@@ -282,6 +282,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<code>/test_mode on</code> — включить тестовый режим (10 мин цикл)\n"
             "<code>/test_mode off</code> — отключить тестовый режим\n"
             "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n"
+            "<code>/debug_reminder</code> — отправить воскресное напоминание (тестирование)\n"
+            "<code>/debug_confirm</code> — подтвердить событие вручную (тестирование)\n"
         )
 
     text += (
@@ -625,8 +627,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sessions[chat_id]["event"]["status"] = "proposed"
                 status_text = "Ожидаем голоса"
         
-        # In test mode, use 1 minute; otherwise 12 hours
-        deadline_delta = timedelta(minutes=1) if load_settings().get("test_mode") else timedelta(hours=12)
+        # In test mode, use 10 seconds; otherwise 12 hours
+        deadline_delta = timedelta(seconds=10) if load_settings().get("test_mode") else timedelta(hours=12)
         sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
 
         save_sessions(sessions)
@@ -1037,7 +1039,7 @@ async def friday_invite_job(app):
 
         try:
             # Reset event state
-            deadline_delta = timedelta(minutes=1) if settings.get("test_mode") else timedelta(hours=12)
+            deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
             session_data["event"] = {
                 "status": "proposed",
                 "proposal_id": None,
@@ -1151,8 +1153,49 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Только администратор может это делать. (первый пользователь в группе автоматически администратор)")
         return
 
-    # Silently trigger Friday invite job—just send the invite, no extra messages
     await friday_invite_job(context.application)
+
+
+async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: Manually trigger Sunday reminder (testing only)."""
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    sessions = load_sessions()
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await update.message.reply_text("❌ Бот не инициализирован в этом чате. Сначала отправьте любое сообщение боту.")
+        return
+
+    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+    if not is_admin:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    await sunday_reminder_job(context.application)
+
+
+async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command: Manually confirm the current event (testing only)."""
+    chat_id = str(update.message.chat_id)
+    user_id = str(update.message.from_user.id)
+
+    sessions = load_sessions()
+    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
+        await update.message.reply_text("❌ Бот не инициализирован в этом чате.")
+        return
+
+    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
+    if not is_admin:
+        await update.message.reply_text("❌ Только администратор может это делать.")
+        return
+
+    event = sessions[chat_id].get("event", {})
+    current_status = event.get("status", "none")
+
+    event["status"] = "confirmed"
+    save_sessions(sessions)
+
+    await update.message.reply_text(f"✅ Событие подтверждено! (было: {current_status})")
 
 
 def get_responses_text(responses: dict, members: dict) -> str:
@@ -1374,7 +1417,7 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
         sessions[group_chat_id]["event"]["status"] = "proposed"
         status_text = "Уведомил всех"
 
-    deadline_delta = timedelta(minutes=1) if settings.get("test_mode") else timedelta(hours=12)
+    deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
     sessions[group_chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
 
     save_sessions(sessions)
@@ -1501,12 +1544,11 @@ async def post_init(app):
 
     # Schedule Call Presence / Delay Check
     if test_mode:
-        # Test mode: run every 10 min, start 7 min after launch so it fires 3 min before next invite
+        # Test mode: run every 1 minute (5 sec in production)
         scheduler.add_job(
             call_presence_check_job,
             "interval",
-            minutes=10,
-            start_date=datetime.now(timezone.utc) + timedelta(minutes=7),
+            minutes=1,
             args=[app],
             id="presence_check",
             replace_existing=True
@@ -1591,7 +1633,9 @@ def main():
     app.add_handler(CommandHandler("time", handle_time_command))  # /time (was /время)
     app.add_handler(CommandHandler("poll", handle_poll_on))  # /poll (was /опрос)
     app.add_handler(CommandHandler("test_mode", handle_test_mode))  # /test_mode on/off
-    app.add_handler(CommandHandler("debug_invite", handle_debug_invite))  # /debug_invite (was /отправить_опрос)
+    app.add_handler(CommandHandler("debug_invite", handle_debug_invite))
+    app.add_handler(CommandHandler("debug_reminder", handle_debug_reminder))
+    app.add_handler(CommandHandler("debug_confirm", handle_debug_confirm))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time_"))
