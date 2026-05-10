@@ -1493,6 +1493,8 @@ async def set_bot_commands(app):
         BotCommand("poll", "Включить/отключить опросы"),
         BotCommand("test_mode", "Включить/отключить тестовый режим (администратор)"),
         BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
+        BotCommand("debug_reminder", "Отправить воскресное напоминание (администратор, тестирование)"),
+        BotCommand("debug_confirm", "Подтвердить событие вручную (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
 
