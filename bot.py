@@ -312,7 +312,7 @@ async def reschedule_jobs(app):
     days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
     day_of_week = days.get(poll_day_str.lower(), 4)
     hour, minute = map(int, poll_time_str.split(":"))
-    scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, tz=base_tz, args=[app], id="friday_invite", replace_existing=True)
+    scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, timezone=base_tz, args=[app], id="friday_invite", replace_existing=True)
 
     # 2. Reminder Check (every 5 minutes)
     try:
@@ -1477,7 +1477,7 @@ async def post_init(app):
         day_of_week=day_of_week,
         hour=hour,
         minute=minute,
-        tz=base_tz,
+        timezone=base_tz,
         args=[app],
         id="friday_invite",
         replace_existing=True
