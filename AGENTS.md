@@ -15,6 +15,23 @@ Mirrors `CLAUDE.md` for non-Claude agents.
 5. Prefer editing existing files over creating new ones.
 6. Keep dependencies minimal.
 7. Update specs in `specs/` at the end of every session and after any major change in requirements or behaviour.
+8. **ALWAYS** propose solution for user review before writing any code.
+
+## TODO Tracking Rules
+
+**ALWAYS update TODO.md when:**
+- User mentions something to add/fix/change
+- A feature is completed
+- Something is deferred (mark with `[deferred]` or `[future]`)
+- A dependency is identified (e.g., X affects Y)
+- User asks "did you record it?" — should never happen
+
+**BEFORE ending each session:**
+- Verify TODO.md reflects current state
+- Check for stale items that should be removed or updated
+
+**Track dependencies explicitly:**
+- If change A affects component B, note it in TODO
 
 ---
 
@@ -37,6 +54,7 @@ Mirrors `CLAUDE.md` for non-Claude agents.
 | 13 | API Design Reviewer | Endpoints, contracts, REST patterns | Qwen3 Coder (Free) |
 | 14 | GitHub Ops | PRs, issues, branches, repo scaffolding | Qwen3 Coder (Free) |
 | 15 | Streamlit Pro | Dashboard architecture, caching, Streamlit-specific | Qwen3 Coder (Free) |
+| 16 | QA Engineer | Automated testing, validation, quality checks | Qwen3 Coder (Free) |
 
 ## Model Pool
 

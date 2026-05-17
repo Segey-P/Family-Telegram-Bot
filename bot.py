@@ -276,15 +276,10 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin:
         text += (
             "<b>Администратор:</b>\n"
+            "<code>/trigger [HH:MM]</code> — запустить цикл созвона сейчас\n"
             "<code>/time 10:00 America/Vancouver</code> — обновить время созвона\n"
             "<code>/poll on</code> — включить еженедельные опросы\n"
             "<code>/poll off</code> — отключить еженедельные опросы\n"
-            "<code>/test_mode on</code> — включить тестовый режим (10 мин цикл)\n"
-            "<code>/test_mode off</code> — отключить тестовый режим\n"
-            "<code>/debug_invite</code> — отправить опрос вручную (тестирование)\n"
-            "<code>/debug_reminder</code> — отправить воскресное напоминание (тестирование)\n"
-            "<code>/debug_confirm</code> — запустить auto-confirm (тестирование)\n"
-            "<code>/debug_presence</code> — запустить presence check (тестирование)\n"
         )
 
     text += (
@@ -304,47 +299,35 @@ async def reschedule_jobs(app):
 
     scheduler = app.scheduler
     settings = load_settings()
-    test_mode = settings.get("test_mode", False)
-    
+
     # 1. Friday/Saturday Invite
-    scheduler.remove_job("friday_invite")
-    if test_mode:
-        scheduler.add_job(friday_invite_job, "interval", minutes=10, args=[app], id="friday_invite")
-    else:
-        poll_day_str = settings.get("poll_day", "Friday")
-        poll_time_str = settings.get("poll_time", "12:00")
-        base_tz_name = settings.get("base_timezone", "Europe/Minsk")
-        base_tz = pytz.timezone(base_tz_name)
-        days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
-        day_of_week = days.get(poll_day_str.lower(), 4)
-        hour, minute = map(int, poll_time_str.split(":"))
-        scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, tz=base_tz, args=[app], id="friday_invite")
+    try:
+        scheduler.remove_job("friday_invite")
+    except:
+        pass
+    poll_day_str = settings.get("poll_day", "Friday")
+    poll_time_str = settings.get("poll_time", "12:00")
+    base_tz_name = settings.get("base_timezone", "Europe/Minsk")
+    base_tz = pytz.timezone(base_tz_name)
+    days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    day_of_week = days.get(poll_day_str.lower(), 4)
+    hour, minute = map(int, poll_time_str.split(":"))
+    scheduler.add_job(friday_invite_job, "cron", day_of_week=day_of_week, hour=hour, minute=minute, tz=base_tz, args=[app], id="friday_invite", replace_existing=True)
 
-    # 2. Presence Check
-    if scheduler.get_job("presence_check"):
-        scheduler.remove_job("presence_check")
-    if test_mode:
-        scheduler.add_job(call_presence_check_job, "interval", minutes=10, start_date=datetime.now(timezone.utc) + timedelta(minutes=7), args=[app], id="presence_check")
-    else:
-        try:
-            base_tz_name = settings.get("base_timezone", "Europe/Minsk")
-            base_tz = pytz.timezone(base_tz_name)
-            h, m = map(int, settings["call_time"].split(":"))
-            rem_h, rem_m = (h, m - 30) if m >= 30 else (h - 1, m + 30)
-            if rem_h < 0: rem_h += 24
-            scheduler.add_job(call_presence_check_job, "cron", day_of_week=6, hour=rem_h, minute=rem_m, tz=base_tz, args=[app], id="presence_check")
-        except: pass
+    # 2. Reminder Check (every 5 minutes)
+    try:
+        scheduler.remove_job("reminder_check")
+    except:
+        pass
+    scheduler.add_job(reminder_check_job, "interval", minutes=5, args=[app], id="reminder_check", replace_existing=True)
 
-    # 3. Sunday Reminder (disabled - 30-min presence check is enough)
-    if scheduler.get_job("sunday_reminder"):
-        scheduler.remove_job("sunday_reminder")
-
-    # 4. Auto-confirm Check
-    if scheduler.get_job("autoconfirm_check"):
+    # 3. Auto-confirm Check
+    try:
         scheduler.remove_job("autoconfirm_check")
-    check_interval = 5 if test_mode else 60
-    scheduler.add_job(check_autoconfirm_job, "interval", seconds=check_interval, args=[app], id="autoconfirm_check")
-    
+    except:
+        pass
+    scheduler.add_job(check_autoconfirm_job, "interval", seconds=60, args=[app], id="autoconfirm_check", replace_existing=True)
+
     logger.info("Scheduler updated with new settings")
 
 
@@ -623,8 +606,8 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sessions[chat_id]["event"]["status"] = "proposed"
                 status_text = "Ожидаем голоса"
         
-        # In test mode, use 10 seconds; otherwise 12 hours
-        deadline_delta = timedelta(seconds=10) if load_settings().get("test_mode") else timedelta(hours=12)
+        auto_confirm_hours = load_settings().get("auto_confirm_hours", 12)
+        deadline_delta = timedelta(hours=auto_confirm_hours)
         sessions[chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
 
         save_sessions(sessions)
@@ -712,16 +695,19 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
 
-            # Edit message to update vote list
-            original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
             vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
-            
+
             if sessions[chat_id]["event"]["status"] == "confirmed":
                 confirmed_time = sessions[chat_id]["event"]["current_time"]
                 settings = load_settings()
                 base_tz = settings["base_timezone"]
                 tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
-                
+
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+                except:
+                    pass
+
                 text = (
                     f"✅ <b>Время подтверждено!</b>\n\n"
                     f"{tz_block}\n\n"
@@ -730,19 +716,22 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
                 ])
+                msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+                sessions[chat_id]["event"]["last_poll_id"] = msg.message_id
+                save_sessions(sessions)
             else:
+                original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
                 text = f"{original_text}\n\n{vote_status}"
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
                     [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
                     [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
                 ])
-
-            await query.edit_message_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
 
         elif query.data.startswith("group_no"):
             sessions[chat_id]["event"]["responses"][user_id] = "no"
@@ -865,64 +854,120 @@ async def check_autoconfirm_job(app):
         confirmed_time = event.get("current_time", settings["call_time"])
         logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
 
-        # Update the poll message in the group to show confirmation
+        # Delete old invite message and send clean confirmation
         if event.get("last_poll_id"):
             try:
-                vote_status = get_responses_text(event.get("responses", {}), session_data["members"])
-                tz_block = format_all_member_times(confirmed_time, base_tz, session_data["members"])
-                
-                text = (
-                    f"✅ <b>Время автоматически подтверждено!</b>\n\n"
-                    f"🕒 <code>{confirmed_time} {base_tz}</code>\n\n"
-                    f"{tz_block}\n\n"
-                    f"{vote_status}"
-                )
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
-                ])
-                await app.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=event["last_poll_id"],
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
+                await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
             except Exception as e:
-                logger.error(f"Failed to update auto-confirmed message in {chat_id}: {e}")
+                logger.warning(f"Failed to delete old invite in {chat_id}: {e}")
 
-    save_sessions(sessions)
+        vote_status = get_responses_text(event.get("responses", {}), session_data["members"])
+        tz_block = format_all_member_times(confirmed_time, base_tz, session_data["members"])
 
-
-async def call_presence_check_job(app):
-    """Scheduled job: 30 min before call (or 1 min in test mode). Check status and offer delay."""
-    logger.info("Call presence check job triggered")
-    sessions = load_sessions()
-    settings = load_settings()
-    base_tz = settings["base_timezone"]
-
-    for chat_id, session_data in sessions.items():
-        if int(chat_id) > 0: continue
-        event = session_data.get("event", {})
-        if event.get("status") != "confirmed": continue
-
-        # Cleanup poll message
-        if event.get("last_poll_id"):
-            try: await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
-            except: pass
-
-        call_time = event.get("current_time", settings["call_time"])
         text = (
-            f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
-            f"🕒 Время: <code>{call_time} {base_tz}</code>\n"
-            f"Все готовы?"
+            f"✅ <b>Время автоматически подтверждено!</b>\n\n"
+            f"🕒 <code>{confirmed_time} {base_tz}</code>\n\n"
+            f"{tz_block}\n\n"
+            f"{vote_status}"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
-            [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+            [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
         ])
-        msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
-        event["last_poll_id"] = msg.message_id
+        try:
+            msg = await app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            event["last_poll_id"] = msg.message_id
+        except Exception as e:
+            logger.error(f"Failed to send auto-confirm message in {chat_id}: {e}")
+
     save_sessions(sessions)
+
+
+async def reminder_check_job(app):
+    """Periodic check (every 5 min): send 30-min and 5-min reminders based on confirmed call time."""
+    logger.info("Reminder check job triggered")
+    sessions = load_sessions()
+    settings = load_settings()
+    base_tz_name = settings["base_timezone"]
+    base_tz = pytz.timezone(base_tz_name)
+
+    now = datetime.now(timezone.utc)
+
+    for chat_id, session_data in sessions.items():
+        if int(chat_id) > 0:
+            continue
+        event = session_data.get("event", {})
+        if event.get("status") != "confirmed":
+            continue
+
+        call_time_str = event.get("current_time", settings["call_time"])
+        h, m = map(int, call_time_str.split(":"))
+        now_base = now.astimezone(base_tz)
+        call_today = now_base.replace(hour=h, minute=m, second=0, microsecond=0)
+
+        if call_today <= now_base:
+            call_today += timedelta(days=1)
+
+        minutes_until = (call_today - now_base).total_seconds() / 60
+
+        if minutes_until <= 0:
+            continue
+
+        # 30-min reminder (presence check)
+        if not event.get("reminder_30_sent") and minutes_until <= 30:
+            logger.info(f"Chat {chat_id}: sending 30-min reminder (call in {minutes_until:.0f} min)")
+
+            if event.get("last_poll_id"):
+                try:
+                    await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
+                except:
+                    pass
+
+            text = (
+                f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
+                f"🕒 Время: <code>{call_time_str} {base_tz_name}</code>\n"
+                f"Все готовы?"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
+                [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+            ])
+            msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+            event["last_poll_id"] = msg.message_id
+            event["reminder_30_sent"] = True
+
+        # 5-min reminder
+        if not event.get("reminder_5_sent") and minutes_until <= 5:
+            logger.info(f"Chat {chat_id}: sending 5-min reminder (call in {minutes_until:.0f} min)")
+
+            if event.get("last_poll_id"):
+                try:
+                    await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
+                except:
+                    pass
+
+            responses = event.get("responses", {})
+            vote_status = get_responses_text(responses, session_data["members"])
+
+            text = (
+                f"⏰ <b>Созвон через 5 минут!</b>\n\n"
+                f"🕒 Время: <code>{call_time_str} {base_tz_name}</code>\n\n"
+                f"<b>Кто будет:</b>\n{vote_status or 'Все подтвердили!'}"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
+                [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
+            ])
+            msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+            event["last_poll_id"] = msg.message_id
+            event["reminder_5_sent"] = True
+
+    save_sessions(sessions)
+
 
 async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle buttons from the 30-min reminder."""
@@ -944,6 +989,7 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
     new_time = new_dt.strftime("%H:%M")
     
     sessions[chat_id]["event"]["current_time"] = new_time
+    sessions[chat_id]["event"]["reminder_5_sent"] = False
     save_sessions(sessions)
     
     # Generate timezone block for all members
@@ -963,57 +1009,6 @@ async def handle_presence_callback(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"Failed to update presence message: {e}")
 
 
-async def sunday_reminder_job(app):
-    """Scheduled job: Send Sunday reminder 5 minutes before the call."""
-    logger.info("Sunday reminder job triggered")
-
-    sessions = load_sessions()
-    settings = load_settings()
-    base_tz = settings["base_timezone"]
-
-    for chat_id, session_data in sessions.items():
-        # Skip private chats
-        if int(chat_id) > 0:
-            continue
-
-        event = session_data.get("event", {})
-        if event.get("status") != "confirmed":
-            logger.info(f"Skipping reminder for chat {chat_id}: status is {event.get('status')}")
-            continue
-
-        # Cleanup previous poll/presence message
-        if event.get("last_poll_id"):
-            try: await app.bot.delete_message(chat_id=chat_id, message_id=event["last_poll_id"])
-            except: pass
-
-        call_time = event.get("current_time", settings["call_time"])
-        responses = event.get("responses", {})
-        vote_status = get_responses_text(responses, session_data["members"])
-
-        text = (
-            f"⏰ <b>Созвон через 5 минут!</b>\n\n"
-            f"🕒 Время: <code>{call_time} {base_tz}</code>\n\n"
-            f"<b>Кто будет:</b>\n{vote_status or 'Все подтвердили!'}"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
-            [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
-        ])
-
-        try:
-            msg = await app.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-            event["last_poll_id"] = msg.message_id
-            save_sessions(sessions)
-            logger.info(f"Sunday reminder sent to chat {chat_id}")
-        except Exception as e:
-            logger.error(f"Failed to send Sunday reminder to {chat_id}: {e}")
-
-
 async def friday_invite_job(app):
     """Scheduled job: Send Friday invite to all active chat groups."""
     logger.info("Friday invite job triggered")
@@ -1029,14 +1024,21 @@ async def friday_invite_job(app):
     base_tz = settings["base_timezone"]
 
     for chat_id, session_data in sessions.items():
-        # Skip private chats—only send to groups
-        if int(chat_id) > 0:  # Positive chat_id = private/user chat; negative = group
+        if int(chat_id) > 0:
             logger.info(f"Skipping private chat {chat_id}")
             continue
 
         try:
+            # Cleanup previous message before resetting event
+            old_poll_id = session_data.get("event", {}).get("last_poll_id")
+            if old_poll_id:
+                try:
+                    await app.bot.delete_message(chat_id=chat_id, message_id=old_poll_id)
+                except Exception as e:
+                    logger.warning(f"Failed to delete old message in {chat_id}: {e}")
+
             # Reset event state
-            deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
+            deadline_delta = timedelta(hours=settings.get("auto_confirm_hours", 12))
             session_data["event"] = {
                 "status": "proposed",
                 "proposal_id": None,
@@ -1044,22 +1046,16 @@ async def friday_invite_job(app):
                 "proposal_author": None,
                 "deadline": (datetime.now(timezone.utc) + deadline_delta).isoformat(),
                 "responses": {uid: "pending" for uid in session_data["members"].keys()},
-                "last_poll_id": session_data["event"].get("last_poll_id") if "event" in session_data else None
+                "reminder_30_sent": False,
+                "reminder_5_sent": False,
             }
             save_sessions(sessions)
 
-            # Cleanup previous message if exists
-            if session_data["event"].get("last_poll_id"):
-                try:
-                    await app.bot.delete_message(chat_id=chat_id, message_id=session_data["event"]["last_poll_id"])
-                except Exception as e:
-                    logger.warning(f"Failed to delete old message in {chat_id}: {e}")
-
             tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
             vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
-            
+
             text = (
-                f"Созвон в воскресенье:\n\n"
+                f"Созвон:\n\n"
                 f"{tz_block}\n\n"
                 f"Подходит?\n\n"
                 f"{vote_status}"
@@ -1082,54 +1078,9 @@ async def friday_invite_job(app):
         except Exception as e:
             logger.error(f"Failed to send weekly invite to {chat_id}: {e}")
 
-    save_sessions(sessions)
 
-
-async def handle_test_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /test_mode command (admin only). /test_mode on or /test_mode off"""
-    sessions = load_sessions()
-    chat_id = str(update.message.chat_id)
-    user_id = str(update.message.from_user.id)
-
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Только администратор может это делать.")
-        return
-
-    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
-    if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Формат: `/test_mode on` или `/test_mode off`", parse_mode="Markdown")
-        return
-
-    action = context.args[0].lower()
-    settings = load_settings()
-
-    if action == "on":
-        settings["test_mode"] = True
-        await update.message.reply_text(
-            "🧪 Тестовый режим включен!\n\n"
-            "• Опрос будет отправляться каждые 10 минут\n"
-            "• Автоподтверждение: 1 минута\n"
-            "• Напоминание: 5 секунд перед созвоном"
-        )
-    elif action == "off":
-        settings["test_mode"] = False
-        await update.message.reply_text("✅ Тестовый режим отключен. Обычный режим восстановлен.")
-    else:
-        await update.message.reply_text("❌ Неизвестный параметр. Используйте: `on` или `off`", parse_mode="Markdown")
-        return
-
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=2)
-
-    await reschedule_jobs(context.application)
-
-
-async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Send poll to current chat only (like production)."""
+async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /trigger — start the call scheduling flow on-demand (admin only)."""
     sessions = load_sessions()
     chat_id = str(update.message.chat_id)
     user_id = str(update.message.from_user.id)
@@ -1152,7 +1103,14 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     base_time = settings.get("call_time", "17:00")
     base_tz = settings.get("base_timezone", "Europe/Minsk")
 
-    deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
+    if context.args:
+        parsed = parse_time_input(context.args[0])
+        if parsed:
+            base_time = parsed
+
+    old_poll_id = session_data.get("event", {}).get("last_poll_id")
+
+    deadline_delta = timedelta(hours=settings.get("auto_confirm_hours", 12))
     session_data["event"] = {
         "status": "proposed",
         "proposal_id": None,
@@ -1160,14 +1118,22 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
         "proposal_author": None,
         "deadline": (datetime.now(timezone.utc) + deadline_delta).isoformat(),
         "responses": {uid: "pending" for uid in session_data["members"].keys()},
+        "reminder_30_sent": False,
+        "reminder_5_sent": False,
     }
     save_sessions(sessions)
+
+    if old_poll_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_poll_id)
+        except:
+            pass
 
     tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
     vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
 
     text = (
-        f"Созвон в воскресенье:\n\n"
+        f"Созвон:\n\n"
         f"{tz_block}\n\n"
         f"Подходит?\n\n"
         f"{vote_status}"
@@ -1181,92 +1147,6 @@ async def handle_debug_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
     session_data["event"]["last_poll_id"] = msg.message_id
     save_sessions(sessions)
-
-
-async def handle_debug_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Trigger 30-min presence check (delete poll, send reminder with buttons)."""
-    chat_id = str(update.message.chat_id)
-    user_id = str(update.message.from_user.id)
-
-    sessions = load_sessions()
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        return
-
-    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
-    if not is_admin:
-        return
-
-    await call_presence_check_job(context.application)
-
-
-async def handle_debug_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Force confirm current chat (bypass deadline like production)."""
-    chat_id = str(update.message.chat_id)
-    user_id = str(update.message.from_user.id)
-
-    sessions = load_sessions()
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        logger.info(f"Debug confirm: chat {chat_id} not in sessions")
-        return
-
-    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
-    if not is_admin:
-        logger.info(f"Debug confirm: user {user_id} not admin")
-        return
-
-    event = sessions[chat_id].get("event", {})
-    current_status = event.get("status", "none")
-    logger.info(f"Debug confirm: current status = {current_status}, last_poll_id = {event.get('last_poll_id')}")
-
-    if current_status != "proposed":
-        logger.info(f"Debug confirm: skipping, status is {current_status}")
-        return
-
-    settings = load_settings()
-    base_tz = settings["base_timezone"]
-    confirmed_time = event.get("current_time", settings["call_time"])
-
-    event["status"] = "confirmed"
-    save_sessions(sessions)
-
-    if event.get("last_poll_id"):
-        vote_status = get_responses_text(event.get("responses", {}), sessions[chat_id]["members"])
-        tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
-        text = (
-            f"✅ <b>Время автоматически подтверждено!</b>\n\n"
-            f"🕒 <code>{confirmed_time} {base_tz}</code>\n\n"
-            f"{tz_block}\n\n"
-            f"{vote_status}"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Изменить", callback_data="group_propose")]
-        ])
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=event["last_poll_id"],
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-        logger.info(f"Debug confirm: poll updated for chat {chat_id}")
-
-
-async def handle_debug_presence(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug command: Manually trigger 30-min presence check (same as production)."""
-    chat_id = str(update.message.chat_id)
-    user_id = str(update.message.from_user.id)
-
-    sessions = load_sessions()
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Бот не инициализирован в этом чате.")
-        return
-
-    is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
-    if not is_admin:
-        await update.message.reply_text("❌ Только администратор может это делать.")
-        return
-
-    await call_presence_check_job(context.application)
 
 
 def get_responses_text(responses: dict, members: dict) -> str:
@@ -1305,7 +1185,7 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     if query.data == "fri_yes":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "yes"
-            
+
             # Check for full confirmation
             all_yes = all(r == "yes" for r in sessions[chat_id]["event"]["responses"].values())
             if all_yes:
@@ -1314,16 +1194,18 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
 
-        # Edit message to update vote list
-        original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
-        vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
-        
         if sessions[chat_id]["event"]["status"] == "confirmed":
             confirmed_time = sessions[chat_id]["event"]["current_time"]
             settings = load_settings()
             base_tz = settings["base_timezone"]
             tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
-            
+            vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
+
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+            except:
+                pass
+
             text = (
                 f"✅ <b>Время подтверждено!</b>\n\n"
                 f"{tz_block}\n\n"
@@ -1332,19 +1214,23 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Изменить", callback_data="fri_propose")]
             ])
+            msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+            sessions[chat_id]["event"]["last_poll_id"] = msg.message_id
+            save_sessions(sessions)
         else:
+            original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
+            vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
             text = f"{original_text}\n\n{vote_status}"
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
                 [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
                 [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
             ])
-
-        await query.edit_message_text(
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+            await query.edit_message_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
 
     elif query.data == "fri_no":
         if chat_id in sessions:
@@ -1488,7 +1374,8 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
         sessions[group_chat_id]["event"]["status"] = "proposed"
         status_text = "Уведомил всех"
 
-    deadline_delta = timedelta(seconds=10) if settings.get("test_mode") else timedelta(hours=12)
+    auto_confirm_hours = settings.get("auto_confirm_hours", 12)
+    deadline_delta = timedelta(hours=auto_confirm_hours)
     sessions[group_chat_id]["event"]["deadline"] = (datetime.now(timezone.utc) + deadline_delta).isoformat()
 
     save_sessions(sessions)
@@ -1560,13 +1447,9 @@ async def set_bot_commands(app):
         BotCommand("tz", "Установить временную зону (Telegram limitation: ASCII only)"),
         BotCommand("mytime", "Показать ваше время"),
         BotCommand("help", "Список команд"),
+        BotCommand("trigger", "Запустить цикл созвона сейчас (администратор)"),
         BotCommand("time", "Обновить время созвона (администратор)"),
         BotCommand("poll", "Включить/отключить опросы"),
-        BotCommand("test_mode", "Включить/отключить тестовый режим (администратор)"),
-        BotCommand("debug_invite", "Отправить опрос вручную (администратор, тестирование)"),
-        BotCommand("debug_reminder", "Отправить воскресное напоминание (администратор, тестирование)"),
-        BotCommand("debug_confirm", "Запустить auto-confirm (администратор, тестирование)"),
-        BotCommand("debug_presence", "Запустить presence check (администратор, тестирование)"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -1575,119 +1458,53 @@ async def post_init(app):
     """Called after bot starts."""
     await set_bot_commands(app)
 
-    # Set up scheduler
     scheduler = AsyncIOScheduler()
     scheduler.start()
 
     settings = load_settings()
-    test_mode = settings.get("test_mode", False)
+    base_tz_name = settings.get("base_timezone", "Europe/Minsk")
+    base_tz = pytz.timezone(base_tz_name)
 
-    # Schedule Friday invite
-    if test_mode:
-        # Test mode: every 10 minutes
-        scheduler.add_job(
-            friday_invite_job,
-            "interval",
-            minutes=10,
-            args=[app],
-            id="friday_invite",
-            replace_existing=True
-        )
-        logger.info("TEST MODE: Friday job runs every 10 minutes")
-    else:
-        # Normal mode: Scheduled from settings
-        poll_day_str = settings.get("poll_day", "Friday")
-        poll_time_str = settings.get("poll_time", "12:00")
-        
-        # Map day name to 0-6 (Mon-Sun)
-        days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
-        day_of_week = days.get(poll_day_str.lower(), 4)
-        hour, minute = map(int, poll_time_str.split(":"))
+    # Schedule Friday invite (cron)
+    poll_day_str = settings.get("poll_day", "Friday")
+    poll_time_str = settings.get("poll_time", "12:00")
+    days = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    day_of_week = days.get(poll_day_str.lower(), 4)
+    hour, minute = map(int, poll_time_str.split(":"))
+    scheduler.add_job(
+        friday_invite_job,
+        "cron",
+        day_of_week=day_of_week,
+        hour=hour,
+        minute=minute,
+        tz=base_tz,
+        args=[app],
+        id="friday_invite",
+        replace_existing=True
+    )
+    logger.info(f"Friday invite scheduled for {poll_day_str} {poll_time_str}")
 
-        scheduler.add_job(
-            friday_invite_job,
-            "cron",
-            day_of_week=day_of_week,
-            hour=hour,
-            minute=minute,
-            args=[app],
-            id="friday_invite",
-            replace_existing=True
-        )
-        logger.info(f"Normal mode: Friday job scheduled for {poll_day_str} {poll_time_str}")
+    # Schedule reminder check (every 5 minutes)
+    scheduler.add_job(
+        reminder_check_job,
+        "interval",
+        minutes=5,
+        args=[app],
+        id="reminder_check",
+        replace_existing=True
+    )
 
-    # Schedule Call Presence / Delay Check
-    if test_mode:
-        # Test mode: run every 1 minute (5 sec in production)
-        scheduler.add_job(
-            call_presence_check_job,
-            "interval",
-            minutes=1,
-            args=[app],
-            id="presence_check",
-            replace_existing=True
-        )
-    else:
-        # Normal mode: 30 min before call
-        try:
-            h, m = map(int, settings["call_time"].split(":"))
-            rem_h, rem_m = (h, m - 30) if m >= 30 else (h - 1, m + 30)
-            scheduler.add_job(
-                call_presence_check_job,
-                "cron",
-                day_of_week=6,
-                hour=rem_h,
-                minute=rem_m,
-                args=[app],
-                id="presence_check",
-                replace_existing=True
-            )
-        except:
-            logger.error("Failed to schedule presence check")
-
-    # Schedule Sunday reminder
-    if test_mode:
-        # In test mode, reminder 5 seconds before "call" (which is not really scheduled but let's say every 10 min)
-        # Actually, let's just schedule it every 10 minutes offset by 9 minutes from the invite
-        scheduler.add_job(
-            sunday_reminder_job,
-            "interval",
-            minutes=10,
-            args=[app],
-            id="sunday_reminder",
-            replace_existing=True
-        )
-    else:
-        # Normal mode: Sunday 16:55 (if call is 17:00)
-        # For simplicity, we hardcode 5 min before settings["call_time"]
-        try:
-            h, m = map(int, settings["call_time"].split(":"))
-            rem_h, rem_m = (h, m - 5) if m >= 5 else (h - 1, m + 55)
-            scheduler.add_job(
-                sunday_reminder_job,
-                "cron",
-                day_of_week=6,  # Sunday
-                hour=rem_h,
-                minute=rem_m,
-                args=[app],
-                id="sunday_reminder",
-                replace_existing=True
-            )
-        except:
-            logger.error("Failed to schedule Sunday reminder")
-
-    # Schedule auto-confirm check every minute (or 5 seconds in test mode)
-    check_interval = 5 if test_mode else 60
+    # Schedule auto-confirm check (every 60 seconds)
     scheduler.add_job(
         check_autoconfirm_job,
         "interval",
-        seconds=check_interval,
+        seconds=60,
         args=[app],
         id="autoconfirm_check",
         replace_existing=True
     )
 
-    logger.info(f"Scheduler initialized. Test mode: {test_mode}")
+    logger.info("Scheduler initialized")
     app.scheduler = scheduler
 
 
@@ -1699,18 +1516,13 @@ def main():
 
     app = ApplicationBuilder().token(token).build()
 
-    # Command handlers (ASCII names only—Telegram limitation)
     app.add_handler(CommandHandler("start", handle_start))
-    app.add_handler(CommandHandler("tz", handle_timezone))  # /tz (was /таймзона)
-    app.add_handler(CommandHandler("mytime", handle_mytime))  # /mytime (was /моевремя)
-    app.add_handler(CommandHandler("help", handle_help))  # /help (was /помощь)
-    app.add_handler(CommandHandler("time", handle_time_command))  # /time (was /время)
-    app.add_handler(CommandHandler("poll", handle_poll_on))  # /poll (was /опрос)
-    app.add_handler(CommandHandler("test_mode", handle_test_mode))  # /test_mode on/off
-    app.add_handler(CommandHandler("debug_invite", handle_debug_invite))
-    app.add_handler(CommandHandler("debug_reminder", handle_debug_reminder))
-    app.add_handler(CommandHandler("debug_confirm", handle_debug_confirm))
-    app.add_handler(CommandHandler("debug_presence", handle_debug_presence))
+    app.add_handler(CommandHandler("tz", handle_timezone))
+    app.add_handler(CommandHandler("mytime", handle_mytime))
+    app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CommandHandler("trigger", handle_trigger))
+    app.add_handler(CommandHandler("time", handle_time_command))
+    app.add_handler(CommandHandler("poll", handle_poll_on))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time_"))
