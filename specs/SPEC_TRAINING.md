@@ -1,0 +1,1 @@
+../../_template/specs/SPEC_TRAINING.md

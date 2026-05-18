@@ -1,0 +1,1 @@
+../../_template/scripts/verify_file_compliance.sh

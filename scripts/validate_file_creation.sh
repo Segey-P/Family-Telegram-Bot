@@ -1,0 +1,1 @@
+../../_template/scripts/validate_file_creation.sh
