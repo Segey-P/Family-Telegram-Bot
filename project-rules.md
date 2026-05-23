@@ -9,6 +9,8 @@
 Every push must be preceded by `./scripts/pre-push.sh` which runs the full test suite.
 It exits non-zero on failure — treat this as a hard gate.
 
+**Workflow:** `./scripts/pre-push.sh && git push bcscout main && echo "Ready to deploy"`
+
 ## Overrides to AGENTS.md
 
 ### File Creation Protocol
@@ -34,6 +36,18 @@ It exits non-zero on failure — treat this as a hard gate.
 - `apscheduler` for cron-like scheduling
 - Settings: `settings.json` (committed, loaded via `json.load`)
 - Sessions: `sessions.json` (NOT committed, created at runtime)
+
+## Deploy (Production — Oracle Cloud / bcscout VM)
+```bash
+# Full deploy: test → push → pull on server → restart service
+./scripts/pre-push.sh && git push bcscout main && \
+  ssh bcscout "cd ~/family-telegram-bot && git pull origin main && sudo systemctl restart family-telegram-bot"
+```
+
+- `bcscout` = SSH host alias in `~/.ssh/config`
+- On the server the git remote is `origin` (separate clone, unaffected by local renames)
+- The systemd service name is `family-telegram-bot`
+- `scripts/deploy_vm.sh` has the legacy deploy flow
 
 ## Session Model
 See `session.py`. Each session has:
