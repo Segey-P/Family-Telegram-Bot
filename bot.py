@@ -1055,7 +1055,7 @@ async def friday_invite_job(app):
             vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
 
             text = (
-                f"Созвон:\n\n"
+                f"Созвон в воскресенье:\n\n"
                 f"{tz_block}\n\n"
                 f"Подходит?\n\n"
                 f"{vote_status}"
@@ -1133,7 +1133,7 @@ async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
 
     text = (
-        f"Созвон:\n\n"
+        f"Созвон в воскресенье:\n\n"
         f"{tz_block}\n\n"
         f"Подходит?\n\n"
         f"{vote_status}"
