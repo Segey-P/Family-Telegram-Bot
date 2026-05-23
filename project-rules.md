@@ -1,9 +1,13 @@
 # Project Rules — Family Telegram Bot
 
 ## Local Test Commands
-No test framework is set up. Testing is done manually in a Telegram group.
-- Run locally: `python bot.py` (requires `.env.local` with `TELEGRAM_BOT_TOKEN`)
-- No automated test suite exists yet
+- Run bot locally: `python bot.py` (requires `.env.local` with `TELEGRAM_BOT_TOKEN`)
+- Run all tests: `python -m pytest tests/ -v`
+- Run single file: `python -m pytest tests/test_bot_pure.py -v`
+
+## Pre-Push Safety
+Every push must be preceded by `./scripts/pre-push.sh` which runs the full test suite.
+It exits non-zero on failure — treat this as a hard gate.
 
 ## Overrides to AGENTS.md
 
@@ -13,6 +17,13 @@ No test framework is set up. Testing is done manually in a Telegram group.
 ### Commit & Push
 - This project does not use feature branches or PRs. Direct pushes to `main` are acceptable (single developer, no CI).
 - Ensure `.env.local`, `sessions.json`, `user_timezones.json`, `pending_proposals.json`, and `venv/` are never committed.
+- Run `./scripts/pre-push.sh` before every `git push`.
+
+### Testing Policy
+- `tests/test_session.py` — unit tests for `session.py` (Session class)
+- `tests/test_bot_pure.py` — unit tests for pure functions: `parse_time_input`, `resolve_timezone`, `generate_time_options`, `format_time_in_tz`, `format_all_member_times`, `get_responses_text`
+- `tests/test_bot_import.py` — import smoke tests
+- Adding a new pure function? Add tests in `test_bot_pure.py`.
 
 ## Python Conventions
 - Single-file bot (`bot.py`) with a `session.py` helper
