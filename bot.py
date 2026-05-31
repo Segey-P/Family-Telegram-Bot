@@ -927,9 +927,10 @@ async def reminder_check_job(app):
                 except:
                     pass
 
+            tz_block = format_all_member_times(call_time_str, base_tz_name, session_data["members"])
             text = (
-                f"🔔 <b>Напоминание: Созвон скоро!</b>\n\n"
-                f"🕒 Время: <code>{call_time_str} {base_tz_name}</code>\n"
+f"🔔 <b>Напоминание: Созвон через 30 минут!</b>\n\n"
+                f"{tz_block}\n\n"
                 f"Все готовы?"
             )
             keyboard = InlineKeyboardMarkup([
@@ -953,9 +954,10 @@ async def reminder_check_job(app):
             responses = event.get("responses", {})
             vote_status = get_responses_text(responses, session_data["members"])
 
+            tz_block = format_all_member_times(call_time_str, base_tz_name, session_data["members"])
             text = (
                 f"⏰ <b>Созвон через 5 минут!</b>\n\n"
-                f"🕒 Время: <code>{call_time_str} {base_tz_name}</code>\n\n"
+                f"{tz_block}\n\n"
                 f"<b>Кто будет:</b>\n{vote_status or 'Все подтвердили!'}"
             )
             keyboard = InlineKeyboardMarkup([
