@@ -10,10 +10,11 @@ from typing import List, Optional, Tuple
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, ChatMember, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -142,6 +143,50 @@ def ensure_member(chat_id: str, user_id: str, name: str, sessions: dict) -> str:
             member["timezone"] = global_tz
 
     return sessions[chat_id]["members"][user_id]["timezone"]
+
+
+async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto-register group when bot is added."""
+    my_chat_member = update.my_chat_member
+    if not my_chat_member:
+        return
+
+    chat = my_chat_member.chat
+    # Only handle groups / supergroups, not channels
+    if chat.type not in ("group", "supergroup"):
+        return
+
+    new_status = my_chat_member.new_chat_member.status
+
+    # Bot was added to the group (member or admin)
+    if new_status in (ChatMember.MEMBER, ChatMember.ADMINISTRATOR):
+        chat_id = str(chat.id)
+        adder = my_chat_member.from_user
+        adder_id = str(adder.id)
+
+        sessions = load_sessions()
+
+        if chat_id not in sessions:
+            sessions[chat_id] = {
+                "members": {},
+                "event": {"status": "idle"},
+                "last_active": datetime.now(timezone.utc).isoformat(),
+            }
+
+        # Register the user who added the bot as admin if not yet registered
+        if adder_id not in sessions[chat_id]["members"]:
+            tz = get_user_timezone(adder_id) or DEFAULT_TIMEZONE
+            sessions[chat_id]["members"][adder_id] = {
+                "name": adder.first_name or "User",
+                "timezone": tz,
+                "first_seen": datetime.now(timezone.utc).isoformat(),
+                "is_admin": True,
+            }
+            save_sessions(sessions)
+            logger.info(
+                f"Bot added to chat {chat_id} ({chat.title or chat_id}) "
+                f"by {adder_id} ({adder.first_name}) — session auto-created"
+            )
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1091,9 +1136,13 @@ async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Работает только в группах.")
         return
 
-    if chat_id not in sessions or user_id not in sessions[chat_id]["members"]:
-        await update.message.reply_text("❌ Бот не инициализирован в этой группе.")
-        return
+    # Auto-register group + user if this is the first time
+    if chat_id not in sessions:
+        ensure_member(chat_id, user_id, update.message.from_user.first_name or "User", sessions)
+        sessions[chat_id]["members"][user_id]["is_admin"] = True
+        save_sessions(sessions)
+    elif user_id not in sessions[chat_id]["members"]:
+        ensure_member(chat_id, user_id, update.message.from_user.first_name or "User", sessions)
 
     is_admin = sessions[chat_id]["members"][user_id].get("is_admin", False)
     if not is_admin:
@@ -1525,6 +1574,9 @@ def main():
     app.add_handler(CommandHandler("trigger", handle_trigger))
     app.add_handler(CommandHandler("time", handle_time_command))
     app.add_handler(CommandHandler("poll", handle_poll_on))
+
+    # Auto-register when bot is added to a group
+    app.add_handler(ChatMemberHandler(handle_my_chat_member, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Callback handlers
     app.add_handler(CallbackQueryHandler(handle_private_change_time, pattern="^private_change_time_"))
