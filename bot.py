@@ -530,14 +530,14 @@ def format_all_member_times(time_str: str, base_tz_name: str, members: dict, use
     user_tzs = load_user_timezones()
     
     for uid, member in members.items():
-        # Force refresh from global cache if global has a TZ but member record is default/missing
+        # Always prefer the timezone set via /tz (global cache) over the session record
         global_tz = user_tzs.get(str(uid))
         current_tz = member.get("timezone")
-        
-        if global_tz and (not current_tz or current_tz == DEFAULT_TIMEZONE):
+
+        if global_tz and global_tz != current_tz:
             member["timezone"] = global_tz
             current_tz = global_tz
-            
+
         tz_name = current_tz or DEFAULT_TIMEZONE
         name = html.escape(member.get("name", "User"))
         if tz_name not in seen:
@@ -988,6 +988,12 @@ async def reminder_check_job(app):
     settings = load_settings()
     base_tz_name = settings["base_timezone"]
     now = datetime.now(timezone.utc)
+
+    # Determine the call day: the day after poll_day (e.g. Saturday invite → Sunday call)
+    _day_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
+                "Friday": 4, "Saturday": 5, "Sunday": 6}
+    poll_day_num = _day_map.get(settings.get("poll_day", "Saturday"), 5)
+    call_day_num = (poll_day_num + 1) % 7  # Sunday = 6
 
     for chat_id, session_data in sessions.items():
         if int(chat_id) > 0:
@@ -1612,6 +1618,22 @@ async def post_init(app):
     app.scheduler = scheduler
 
 
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto-register any user who sends a message in a known group."""
+    if not update.message or not update.message.from_user:
+        return
+    chat_id = str(update.message.chat_id)
+    if int(chat_id) > 0:
+        return
+    sessions = load_sessions()
+    if chat_id not in sessions:
+        return
+    user_id = str(update.message.from_user.id)
+    if user_id not in sessions[chat_id]["members"]:
+        ensure_member(chat_id, user_id, update.message.from_user.first_name or "User", sessions)
+        save_sessions(sessions)
+
+
 def main():
     load_dotenv(dotenv_path=".env.local")
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -1640,6 +1662,9 @@ def main():
 
     # Free-text time input in private chat (e.g. "7:20", "7.20", "7 20")
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, handle_time_text_input))
+
+    # Auto-register group members when they send any message (low priority, group 1)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_group_message), group=1)
 
     # Post-init hook
     app.post_init = post_init
