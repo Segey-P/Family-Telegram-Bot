@@ -11,3 +11,4 @@ def test_bot_pure_functions_accessible():
     assert callable(bot.format_time_in_tz)
     assert callable(bot.format_all_member_times)
     assert callable(bot.get_responses_text)
+    assert callable(bot.compute_minutes_until)

@@ -1,7 +1,11 @@
+from datetime import datetime, timezone
+
+import pytest
 from unittest.mock import patch
 
 from bot import (
     DEFAULT_TIMEZONE,
+    compute_minutes_until,
     ensure_member,
     generate_time_options,
     get_responses_text,
@@ -194,3 +198,101 @@ class TestEnsureMember:
         with patch("bot.get_user_timezone", return_value="Europe/Berlin"):
             tz = ensure_member("-1001", "u1", "Alice", sessions)
         assert tz == "Asia/Tokyo"  # unchanged
+
+
+class TestComputeMinutesUntil:
+    """compute_minutes_until handles call dates correctly (fix for reminder-a-day-early bug)."""
+
+    # ── Helpers ──────────────────────────────────────────────
+    # Common test time: Sunday 17:00 Minsk = Sunday 14:00 UTC
+    SUNDAY_1400_UTC = datetime(2026, 6, 28, 14, 0, 0, tzinfo=timezone.utc)
+    # Saturday 16:30 Minsk = Saturday 13:30 UTC  (the bug scenario: "today" fires Sat not Sun)
+    SAT_1330_UTC = datetime(2026, 6, 27, 13, 30, 0, tzinfo=timezone.utc)
+    # Saturday 14:00 Minsk = Saturday 11:00 UTC
+    SAT_1100_UTC = datetime(2026, 6, 27, 11, 0, 0, tzinfo=timezone.utc)
+
+    def test_with_call_date_avoids_firing_a_day_early(self):
+        """With call_date=Sunday, minutes_until targets Sunday even though
+        it's Saturday today. (The root-cause scenario.)"""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str="2026-06-28",
+            now=self.SAT_1330_UTC,          # Saturday 16:30 Minsk
+        )
+        # This should be ~24.5h (call is Sunday 17:00 Minsk)
+        assert 1400 < mins < 1500, f"Expected ~1470 min, got {mins}"
+
+    def test_with_call_date_call_today_fires_correctly(self):
+        """With call_date=today, minutes are accurate when call is today."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str="2026-06-28",
+            now=self.SUNDAY_1400_UTC,       # Sunday 17:00 Minsk exactly
+        )
+        assert -1 < mins < 1, f"Expected ~0 min, got {mins}"
+
+    def test_with_call_date_before_call(self):
+        """30 minutes before the call on the correct day."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str="2026-06-28",
+            now=datetime(2026, 6, 28, 13, 30, 0, tzinfo=timezone.utc),  # 16:30 Minsk
+        )
+        assert 29 < mins < 31, f"Expected ~30 min, got {mins}"
+
+    def test_with_call_date_after_call_gives_negative(self):
+        """After the call has passed, minutes_until is negative (skipped by caller)."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str="2026-06-28",
+            now=datetime(2026, 6, 28, 15, 0, 0, tzinfo=timezone.utc),  # 18:00 Minsk, after call
+        )
+        assert mins < 0, f"Expected negative, got {mins}"
+
+    # ── Fallback (no call_date): old behaviour ───────────────
+
+    def test_fallback_no_call_date_same_day(self):
+        """Without call_date, minutes are computed for today (old behaviour).
+        At exactly call time, fallback advances to tomorrow (call_today <= now_base)."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str=None,
+            now=self.SUNDAY_1400_UTC,       # Sunday 17:00 Minsk — exactly call time
+        )
+        # Falls to tomorrow because call_today (17:00) <= now_base (17:00)
+        assert 1435 < mins < 1445, f"Expected ~1440 min (tomorrow), got {mins}"
+
+    def test_fallback_no_call_date_before_today_time(self):
+        """Without call_date, call_today is today's occurrence."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str=None,
+            now=datetime(2026, 6, 28, 13, 30, 0, tzinfo=timezone.utc),  # Sunday 16:30 Minsk
+        )
+        assert 29 < mins < 31, f"Expected ~30 min, got {mins}"
+
+    def test_fallback_no_call_date_after_today_time_goes_tomorrow(self):
+        """Without call_date, if today's time has passed, target becomes tomorrow."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str=None,
+            now=datetime(2026, 6, 28, 15, 0, 0, tzinfo=timezone.utc),  # 18:00 Minsk — after call
+        )
+        # Should target Monday 17:00 Minsk (tomorrow) = 23h = 1380 min
+        assert 1375 < mins < 1385, f"Expected ~1380 min (tomorrow call), got {mins}"
+
+    def test_fallback_a_day_early_fires_wrongly(self):
+        """EXISTING BUG: without call_date, reminders fire a day early.
+        This test documents the old behaviour — once all events have call_date,
+        this path is no longer hit."""
+        mins = compute_minutes_until(
+            "17:00", "Europe/Minsk",
+            call_date_str=None,
+            now=self.SAT_1330_UTC,  # Saturday 16:30 Minsk
+        )
+        # This is the BUG: it fires for Saturday 17:00, just 30 min away
+        assert 29 < mins < 31, (
+            f"BUG: Expected ~30 min (Saturday 17:00 Minsk), got {mins}. "
+            "This is the old behaviour — see test_with_call_date_avoids_firing_a_day_early "
+            "for the fix."
+        )

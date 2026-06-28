@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -650,6 +650,9 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             else:
                 sessions[chat_id]["event"]["status"] = "proposed"
                 status_text = "Ожидаем голоса"
+            # Reset reminder flags on any status transition — prevents stale flags from prior cycles
+            sessions[chat_id]["event"]["reminder_30_sent"] = False
+            sessions[chat_id]["event"]["reminder_5_sent"] = False
         
         auto_confirm_hours = load_settings().get("auto_confirm_hours", 12)
         deadline_delta = timedelta(hours=auto_confirm_hours)
@@ -736,6 +739,9 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
             all_yes = all(r == "yes" for r in sessions[chat_id]["event"]["responses"].values())
             if all_yes:
                 sessions[chat_id]["event"]["status"] = "confirmed"
+                # Reset reminder flags in case this is a re-proposal within the same week
+                sessions[chat_id]["event"]["reminder_30_sent"] = False
+                sessions[chat_id]["event"]["reminder_5_sent"] = False
 
             save_sessions(sessions)
             await query.answer("✅ Спасибо!")
@@ -896,6 +902,8 @@ async def check_autoconfirm_job(app):
 
         # Auto-confirm
         event["status"] = "confirmed"
+        event["reminder_30_sent"] = False
+        event["reminder_5_sent"] = False
         confirmed_time = event.get("current_time", settings["call_time"])
         logger.info(f"Chat {chat_id}: Auto-confirmed at {confirmed_time}")
 
@@ -932,14 +940,53 @@ async def check_autoconfirm_job(app):
     save_sessions(sessions)
 
 
+def compute_minutes_until(
+    call_time_str: str,
+    base_tz_name: str,
+    call_date_str: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> float:
+    """Compute minutes until the call.
+
+    If call_date_str is provided, uses that date + call_time in base_tz.
+    Otherwise falls back to 'today or tomorrow' heuristic (pre-fix behaviour).
+
+    Args:
+        call_time_str: Time string like "17:00"
+        base_tz_name: IANA timezone name like "Europe/Minsk"
+        call_date_str: Optional ISO date string like "2026-06-28"
+        now: Current UTC datetime (for test injection)
+
+    Returns:
+        Minutes until the call (can be negative if call is in the past)
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    h, m = map(int, call_time_str.split(":"))
+    base_tz = pytz.timezone(base_tz_name)
+
+    if call_date_str:
+        call_date = date.fromisoformat(call_date_str)
+        target_base = base_tz.localize(
+            datetime(call_date.year, call_date.month, call_date.day, h, m)
+        )
+        return (target_base - now.astimezone(base_tz)).total_seconds() / 60
+
+    # Fallback: call is today or tomorrow
+    now_base = now.astimezone(base_tz)
+    call_today = now_base.replace(hour=h, minute=m, second=0, microsecond=0)
+    if call_today <= now_base:
+        call_today += timedelta(days=1)
+    return (call_today - now_base).total_seconds() / 60
+
+
 async def reminder_check_job(app):
     """Periodic check (every 5 min): send 30-min and 5-min reminders based on confirmed call time."""
     logger.info("Reminder check job triggered")
     sessions = load_sessions()
     settings = load_settings()
     base_tz_name = settings["base_timezone"]
-    base_tz = pytz.timezone(base_tz_name)
-
     now = datetime.now(timezone.utc)
 
     for chat_id, session_data in sessions.items():
@@ -950,14 +997,11 @@ async def reminder_check_job(app):
             continue
 
         call_time_str = event.get("current_time", settings["call_time"])
-        h, m = map(int, call_time_str.split(":"))
-        now_base = now.astimezone(base_tz)
-        call_today = now_base.replace(hour=h, minute=m, second=0, microsecond=0)
-
-        if call_today <= now_base:
-            call_today += timedelta(days=1)
-
-        minutes_until = (call_today - now_base).total_seconds() / 60
+        minutes_until = compute_minutes_until(
+            call_time_str, base_tz_name,
+            call_date_str=event.get("call_date"),
+            now=now,
+        )
 
         if minutes_until <= 0:
             continue
@@ -1086,6 +1130,7 @@ async def friday_invite_job(app):
 
             # Reset event state
             deadline_delta = timedelta(hours=settings.get("auto_confirm_hours", 12))
+            call_date = (datetime.now(pytz.timezone(base_tz)) + timedelta(days=1)).date()
             session_data["event"] = {
                 "status": "proposed",
                 "proposal_id": None,
@@ -1095,6 +1140,7 @@ async def friday_invite_job(app):
                 "responses": {uid: "pending" for uid in session_data["members"].keys()},
                 "reminder_30_sent": False,
                 "reminder_5_sent": False,
+                "call_date": call_date.isoformat(),
             }
             save_sessions(sessions)
 
@@ -1162,6 +1208,7 @@ async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     old_poll_id = session_data.get("event", {}).get("last_poll_id")
 
     deadline_delta = timedelta(hours=settings.get("auto_confirm_hours", 12))
+    call_date = datetime.now(pytz.timezone(base_tz)).date()
     session_data["event"] = {
         "status": "proposed",
         "proposal_id": None,
@@ -1171,6 +1218,7 @@ async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "responses": {uid: "pending" for uid in session_data["members"].keys()},
         "reminder_30_sent": False,
         "reminder_5_sent": False,
+        "call_date": call_date.isoformat(),
     }
     save_sessions(sessions)
 
@@ -1241,6 +1289,8 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             all_yes = all(r == "yes" for r in sessions[chat_id]["event"]["responses"].values())
             if all_yes:
                 sessions[chat_id]["event"]["status"] = "confirmed"
+                sessions[chat_id]["event"]["reminder_30_sent"] = False
+                sessions[chat_id]["event"]["reminder_5_sent"] = False
 
         save_sessions(sessions)
         await query.answer("✅ Спасибо!")
@@ -1424,6 +1474,9 @@ async def handle_time_text_input(update: Update, context: ContextTypes.DEFAULT_T
     else:
         sessions[group_chat_id]["event"]["status"] = "proposed"
         status_text = "Уведомил всех"
+    # Reset reminder flags on any transition — prevents stale flags from prior cycles
+    sessions[group_chat_id]["event"]["reminder_30_sent"] = False
+    sessions[group_chat_id]["event"]["reminder_5_sent"] = False
 
     auto_confirm_hours = settings.get("auto_confirm_hours", 12)
     deadline_delta = timedelta(hours=auto_confirm_hours)
