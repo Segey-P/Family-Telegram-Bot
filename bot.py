@@ -1032,9 +1032,12 @@ f"🔔 <b>Напоминание: Созвон через 30 минут!</b>\n\n
                 [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
                 [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
             ])
-            msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
-            event["last_poll_id"] = msg.message_id
-            event["reminder_30_sent"] = True
+            try:
+                msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+                event["last_poll_id"] = msg.message_id
+                event["reminder_30_sent"] = True
+            except Exception as e:
+                logger.error(f"Failed to send 30-min reminder to {chat_id}: {e}")
 
         # 5-min reminder
         if not event.get("reminder_5_sent") and minutes_until <= 5:
@@ -1059,9 +1062,12 @@ f"🔔 <b>Напоминание: Созвон через 30 минут!</b>\n\n
                 [InlineKeyboardButton("⏳ +15 мин", callback_data="pres_delay_15")],
                 [InlineKeyboardButton("⏳ +30 мин", callback_data="pres_delay_30")]
             ])
-            msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
-            event["last_poll_id"] = msg.message_id
-            event["reminder_5_sent"] = True
+            try:
+                msg = await app.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
+                event["last_poll_id"] = msg.message_id
+                event["reminder_5_sent"] = True
+            except Exception as e:
+                logger.error(f"Failed to send 5-min reminder to {chat_id}: {e}")
 
     save_sessions(sessions)
 
