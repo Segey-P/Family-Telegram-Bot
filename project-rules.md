@@ -44,8 +44,7 @@ It exits non-zero on failure — treat this as a hard gate.
   ssh bcscout "cd ~/family-telegram-bot && git pull origin main && sudo systemctl restart family-telegram-bot"
 ```
 
-- `bcscout` = SSH host alias in `~/.ssh/config`
-- On the server the git remote is `origin` (separate clone, unaffected by local renames)
+- `bcscout` = SSH host alias in `~/.ssh/config` (points to the VM)
 - The systemd service name is `family-telegram-bot`
 - `scripts/deploy_vm.sh` has the legacy deploy flow
 

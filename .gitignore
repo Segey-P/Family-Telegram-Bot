@@ -13,3 +13,4 @@ build/
 config/local/
 sessions.json
 *.log
+sqlite_mcp_server.db
