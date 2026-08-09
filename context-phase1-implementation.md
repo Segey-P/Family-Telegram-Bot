@@ -118,8 +118,8 @@ Buttons: ✅ Подходит | 🔄 Предложить другое | ❌ Н�
    Подходит?
    ```
 6. Others vote ✅ / ❌ / 🔄
-7. All ✅ → immediate confirmation. Any ❌ → proposal rejected.
-8. Timeout (12h, or 1 min in test mode) with no ❌ → auto-confirm
+7. All ✅ → immediate confirmation. Single ❌ → marks unavailability, voting continues.
+8. Timeout (12h, or 1 min in test mode) → auto-confirm regardless of ❌ votes
 
 ### Auto-Register
 
@@ -145,7 +145,7 @@ Members sharing the same timezone are each listed separately (same time shown).
 | Job | Schedule | Purpose |
 |---|---|---|
 | `friday_invite` | Cron (configurable, default Sat 08:00 Minsk) | Sends weekly invite with voting buttons |
-| `check_autoconfirm_job` | Interval, every 60s | Checks for expired deadlines; auto-confirms if no rejections |
+| `check_autoconfirm_job` | Interval, every 60s | Checks for expired deadlines; auto-confirms |
 | `reminder_check_job` | Interval, every 5min | Sends 30-min and 5-min reminders for confirmed events |
 
 ### Reminder Logic (`reminder_check_job`)

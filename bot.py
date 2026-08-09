@@ -786,21 +786,16 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         elif query.data.startswith("group_no"):
             sessions[chat_id]["event"]["responses"][user_id] = "no"
-            sessions[chat_id]["event"]["status"] = "idle"  # Reject proposal immediately
             save_sessions(sessions)
-            await query.answer("❌ Записано. Предложение отклонено.")
+            await query.answer("❌ Записано.")
 
-            # Edit message to update vote list and remove buttons
             original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
             vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
-            
-            text = (
-                f"❌ <b>Предложение отклонено</b>\n\n"
-                f"{original_text}\n\n"
-                f"{vote_status}"
-            )
+            text = f"{original_text}\n\n{vote_status}"
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")]
+                [InlineKeyboardButton("✅ Подходит", callback_data=f"group_yes_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("❌ Не подходит", callback_data=f"group_no_{chat_id}_{user_id}")],
+                [InlineKeyboardButton("🔄 Предложить другое", callback_data="group_propose")],
             ])
             await query.edit_message_text(
                 text=text,
@@ -873,7 +868,7 @@ async def handle_proposal_yes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def check_autoconfirm_job(app):
-    """Scheduled job: Check for expired deadlines and auto-confirm if no rejections."""
+    """Scheduled job: Check for expired deadlines and auto-confirm."""
     logger.info("Auto-confirm check triggered")
 
     sessions = load_sessions()
@@ -890,14 +885,6 @@ async def check_autoconfirm_job(app):
         now = datetime.now(timezone.utc)
 
         if now < deadline:
-            continue
-
-        responses = event.get("responses", {})
-        has_rejection = any(r == "no" for r in responses.values())
-
-        if has_rejection:
-            logger.info(f"Chat {chat_id}: Proposal rejected (has 'no' vote)")
-            event["status"] = "idle"
             continue
 
         # Auto-confirm
@@ -1348,21 +1335,16 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "fri_no":
         if chat_id in sessions:
             sessions[chat_id]["event"]["responses"][user_id] = "no"
-            sessions[chat_id]["event"]["status"] = "idle"  # Reject proposal immediately
         save_sessions(sessions)
-        await query.answer("❌ Записано. Опрос отклонен.")
+        await query.answer("❌ Записано.")
 
-        # Edit message to update vote list and remove buttons
         original_text = query.message.text.split("\n\n✅")[0].split("\n\n❌")[0].split("\n\n⏳")[0].split("\n\n🔔")[0]
         vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
-        
-        text = (
-            f"❌ <b>Опрос отклонен</b>\n\n"
-            f"{original_text}\n\n"
-            f"{vote_status}"
-        )
+        text = f"{original_text}\n\n{vote_status}"
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Предложить новое время", callback_data="fri_propose")]
+            [InlineKeyboardButton("✅ Подходит", callback_data="fri_yes")],
+            [InlineKeyboardButton("🔄 Предложить другое", callback_data="fri_propose")],
+            [InlineKeyboardButton("❌ Не смогу", callback_data="fri_no")],
         ])
         await query.edit_message_text(
             text=text,

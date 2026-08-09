@@ -206,7 +206,7 @@ idle → proposed → confirmed
   * resets all responses
 * Any ❌:
 
-  * proposal rejected
+  * marks unavailability, voting continues
 * Any 🔄:
 
   * replaces proposal
@@ -223,7 +223,6 @@ idle → proposed → confirmed
 
 Trigger:
 
-* No ❌ responses
 * `deadline` reached
 
 **Message (RU):**
