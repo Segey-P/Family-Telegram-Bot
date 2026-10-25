@@ -81,20 +81,28 @@ class TestGenerateTimeOptions:
 
 class TestFormatTimeInTz:
     def test_basic_conversion(self):
-        result = format_time_in_tz("12:00", "UTC", "Europe/Berlin")
+        # Use a summer date to ensure DST offset (CEST = UTC+2)
+        result = format_time_in_tz("12:00", "UTC", "Europe/Berlin", call_date_str="2026-06-15")
         assert result == "14:00"
 
     def test_same_timezone(self):
-        result = format_time_in_tz("10:30", "Europe/Minsk", "Europe/Minsk")
+        # Use a summer date for consistency
+        result = format_time_in_tz("10:30", "Europe/Minsk", "Europe/Minsk", call_date_str="2026-06-15")
         assert result == "10:30"
 
     def test_negative_offset(self):
-        result = format_time_in_tz("12:00", "UTC", "America/Vancouver")
+        # Use a summer date (PDT = UTC-7)
+        result = format_time_in_tz("12:00", "UTC", "America/Vancouver", call_date_str="2026-06-15")
         assert result == "05:00"
 
     def test_invalid_from_tz_returns_original(self):
         result = format_time_in_tz("12:00", "Not/ATimezone", "UTC")
         assert result == "12:00"
+
+    def test_winter_offset(self):
+        # Test winter offset explicitly
+        result = format_time_in_tz("12:00", "UTC", "Europe/Berlin", call_date_str="2026-01-15")
+        assert result == "13:00"  # CET = UTC+1 in winter
 
 
 class TestGetResponsesText:

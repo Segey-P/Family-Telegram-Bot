@@ -505,30 +505,57 @@ def generate_time_options(base_time_str: str) -> List[str]:
     return options
 
 
-def format_time_in_tz(time_str: str, from_tz_name: str, to_tz_name: str) -> str:
-    """Convert time_str (HH:MM) from from_tz to to_tz and return HH:MM."""
+def format_time_in_tz(
+    time_str: str,
+    from_tz_name: str,
+    to_tz_name: str,
+    call_date_str: Optional[str] = None,
+) -> str:
+    """Convert time_str (HH:MM) from from_tz to to_tz and return HH:MM.
+
+    Uses call_date_str if provided so DST offsets are computed for the
+    actual call day. Falls back to today's date in from_tz when unknown.
+    """
     try:
         from_tz = pytz.timezone(from_tz_name)
         to_tz = pytz.timezone(to_tz_name)
 
         hour, minute = map(int, time_str.split(":"))
-        dt_from = from_tz.localize(datetime(2026, 5, 5, hour, minute))  # arbitrary date
-        dt_to = dt_from.astimezone(to_tz)
 
+        if call_date_str:
+            call_date = date.fromisoformat(call_date_str)
+            dt_from = from_tz.localize(
+                datetime(call_date.year, call_date.month, call_date.day, hour, minute)
+            )
+        else:
+            now_base = datetime.now(timezone.utc).astimezone(from_tz)
+            dt_from = from_tz.localize(
+                datetime(
+                    now_base.year, now_base.month, now_base.day, hour, minute
+                )
+            )
+
+        dt_to = dt_from.astimezone(to_tz)
         return dt_to.strftime("%H:%M")
     except Exception as e:
         logger.error(f"Time conversion error: {e}")
         return time_str
 
 
-def format_all_member_times(time_str: str, base_tz_name: str, members: dict, user_id_to_refresh: str = None) -> str:
+def format_all_member_times(
+    time_str: str,
+    base_tz_name: str,
+    members: dict,
+    user_id_to_refresh: str = None,
+    call_date_str: Optional[str] = None,
+) -> str:
     """Return a block showing time_str in each member's local timezone."""
     seen: dict = {}
     lines = []
-    
+
     # Load global cache to verify/update timezones on the fly
     user_tzs = load_user_timezones()
-    
+
     for uid, member in members.items():
         # Always prefer the timezone set via /tz (global cache) over the session record
         global_tz = user_tzs.get(str(uid))
@@ -541,7 +568,9 @@ def format_all_member_times(time_str: str, base_tz_name: str, members: dict, use
         tz_name = current_tz or DEFAULT_TIMEZONE
         name = html.escape(member.get("name", "User"))
         if tz_name not in seen:
-            seen[tz_name] = format_time_in_tz(time_str, base_tz_name, tz_name)
+            seen[tz_name] = format_time_in_tz(
+                time_str, base_tz_name, tz_name, call_date_str=call_date_str
+            )
         lines.append(f"• {name}: {seen[tz_name]} ({tz_name})")
     return "\n".join(lines)
 
@@ -902,7 +931,7 @@ async def check_autoconfirm_job(app):
                 logger.warning(f"Failed to delete old invite in {chat_id}: {e}")
 
         vote_status = get_responses_text(event.get("responses", {}), session_data["members"])
-        tz_block = format_all_member_times(confirmed_time, base_tz, session_data["members"])
+        tz_block = format_all_member_times(confirmed_time, base_tz, session_data["members"], call_date_str=event.get("call_date"))
 
         text = (
             f"✅ <b>Время автоматически подтверждено!</b>\n\n"
@@ -1009,7 +1038,10 @@ async def reminder_check_job(app):
                 except:
                     pass
 
-            tz_block = format_all_member_times(call_time_str, base_tz_name, session_data["members"])
+            tz_block = format_all_member_times(
+                call_time_str, base_tz_name, session_data["members"],
+                call_date_str=event.get("call_date")
+            )
             text = (
 f"🔔 <b>Напоминание: Созвон через 30 минут!</b>\n\n"
                 f"{tz_block}\n\n"
@@ -1039,7 +1071,10 @@ f"🔔 <b>Напоминание: Созвон через 30 минут!</b>\n\n
             responses = event.get("responses", {})
             vote_status = get_responses_text(responses, session_data["members"])
 
-            tz_block = format_all_member_times(call_time_str, base_tz_name, session_data["members"])
+            tz_block = format_all_member_times(
+                call_time_str, base_tz_name, session_data["members"],
+                call_date_str=event.get("call_date")
+            )
             text = (
                 f"⏰ <b>Созвон через 5 минут!</b>\n\n"
                 f"{tz_block}\n\n"
@@ -1143,7 +1178,10 @@ async def friday_invite_job(app):
             }
             save_sessions(sessions)
 
-            tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
+            tz_block = format_all_member_times(
+                base_time, base_tz, session_data["members"],
+                call_date_str=call_date.isoformat()
+            )
             vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
 
             text = (
@@ -1227,7 +1265,7 @@ async def handle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-    tz_block = format_all_member_times(base_time, base_tz, session_data["members"])
+    tz_block = format_all_member_times(base_time, base_tz, session_data["members"], call_date_str=call_date.isoformat())
     vote_status = get_responses_text(session_data["event"]["responses"], session_data["members"])
 
     text = (
@@ -1298,7 +1336,8 @@ async def handle_friday_response(update: Update, context: ContextTypes.DEFAULT_T
             confirmed_time = sessions[chat_id]["event"]["current_time"]
             settings = load_settings()
             base_tz = settings["base_timezone"]
-            tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"])
+            call_date_str = sessions[chat_id]["event"].get("call_date")
+            tz_block = format_all_member_times(confirmed_time, base_tz, sessions[chat_id]["members"], call_date_str=call_date_str)
             vote_status = get_responses_text(sessions[chat_id]["event"]["responses"], sessions[chat_id]["members"])
 
             try:
